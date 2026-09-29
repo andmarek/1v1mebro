@@ -12,7 +12,7 @@ npm run dev
 Open **http://127.0.0.1:5173** in a desktop browser and click **Enter the range**. Chrome or Edge in a regular browser window is recommended for mouse capture. If an embedded preview blocks Pointer Lock, the game falls back to dragging or using arrow keys to look and clicking to shoot. Q toggles aiming in either mode.
 
 ```sh
-npm test       # movement, rifle timing, patrol, and penetration tests
+npm test       # movement feel, collision, rifle timing, patrol, and penetration tests
 npm run build # type-check and production build
 npm run preview
 ```
@@ -23,8 +23,8 @@ npm run preview
 | --- | --- |
 | WASD | Move |
 | Mouse | Look |
-| Shift | Sprint |
-| Space | Jump |
+| Hold Shift + forward movement | Sprint |
+| Space | Jump; use WASD to steer in the air |
 | Hold C or Ctrl | Lower stance / move slowly |
 | Hold right mouse | Aim down sights |
 | Q | Toggle aiming, useful on a trackpad |
@@ -47,7 +47,9 @@ Bullet holes use three shared procedural textures for metal, wood, and concrete,
 - The **METAL / LIVE FIRE** screen in front of the central patrol and **WOOD / LIVE FIRE** screen on the right make penetration easy to try. For a repeatable test, disable walking enemies and reset practice: a scoped body shot from spawn through the central metal screen deals about 79 damage, leaving 21 health. A second hit eliminates the enemy. HUD feedback shows damage, remaining health, and wallbang eliminations.
 - Body eliminations award 100 points; headshots award 150. Each enemy returns after 2 seconds and starts a new patrol from its spawn.
 - Hip fire has substantial random spread; scoped fire is precise, with extra spread while airborne.
-- Sprinting, strafing, jumping, gravity, sliding against cover, and stepping up stairs use a fixed 120 Hz movement simulation.
+- Movement uses a fixed 120 Hz velocity simulation: running at 6.1 m/s, forward sprinting at 9.4 m/s, aiming at 3.8 m/s, and lowered stance at 2.8 m/s. Acceleration eases in over roughly 100–150 ms, with fast braking and responsive strafe reversals. Diagonal input is normalized.
+- Jumps reach about 1.4 m and retain takeoff momentum. WASD steers in the air, with bounded speed so repeated hops cannot stack extra acceleration. Jump presses are buffered for 120 ms before landing; a 100 ms grace window permits jumping just after leaving an edge. Holding jump does not automatically repeat it.
+- The collision controller slides along cover, steps up stairs, and follows small downward steps without bouncing off each tread. Camera height smooths stair transitions, with a small landing dip and subtle sprint FOV widening. Scope zoom stays consistent, and footsteps/rifle sway follow actual travel rather than held keys.
 - All nine practice enemies walk along patrol loops, with turns, brief pauses, swinging arms, bending knees, and level boots. Paths avoid map cover; elevated patrols stay on their decks. Enemies stop for nearby characters. Disable **Walking enemies** for stationary practice, or reset the session to return everyone to their spawn. They do not shoot back yet.
 - The rifle has rounded machined edges, an open handguard, fluted barrel, hollow scope housing, coated lenses, adjustment dials, screws, engraved markings, and tactical gloves. Metal, paint, fabric, and rubber use distinct physically based materials. The bolt, hands, and magazine animate independently.
 - The scrapyard uses photographed sand, concrete, and rust materials, chipped painted metal, beveled containers with locking hardware, cast Jersey barriers, open steel stairs, hollow pipes, rolled drums, chain-link fences, gravel, tire tracks, and an eroded desert ridge. Physically based lighting, 2K filtered shadows, dust haze, and filmic tone mapping give surfaces more depth. Static detail is batched by material to keep draw calls low. Playable terrain and stair collision retain the original layout.
@@ -62,7 +64,9 @@ This is a feel prototype, not a frame-perfect reproduction of MW2. Stance curren
 - `src/ballistics.test.ts`: direct shots, material resistance, layered/angled cover, hollow shells, and surface projection checks.
 - `src/impacts.ts`: procedural hole textures and a bounded, reusable decal pool.
 - `src/settings.ts`: accessible settings dialog, category navigation, defaults, and local preference storage.
-- `src/simulation.ts`: engine-independent character collision and rifle rules, a starting point for a future authoritative server.
+- `src/simulation.ts`: engine-independent character collision, gravity, and rifle rules.
+- `src/movement.ts`: deterministic velocity controller, ground/air steering, jump grace/buffering, and stair descent.
+- `src/movement.test.ts`: speed limits, acceleration/braking, jump timing, cover collision, ceilings, and actual tower traversal.
 - `src/arena.ts`: procedural arena, colliders, and training targets.
 - `src/arenaMaterials.ts`: photographed PBR surfaces and procedural worn paint.
 - `src/arenaGeometry.ts`: world-scaled UVs, sloped barriers, and desert terrain.

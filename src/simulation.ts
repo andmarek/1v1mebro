@@ -2,6 +2,7 @@ export type Solid = { minX: number; maxX: number; minY: number; maxY: number; mi
 export type Player = { x: number; y: number; z: number; vy: number; grounded: boolean };
 export const PLAYER_RADIUS = 0.32;
 export const PLAYER_HEIGHT = 1.75;
+export const GRAVITY = 24;
 const overlaps = (p: Player, s: Solid, height: number) =>
   p.x + PLAYER_RADIUS > s.minX && p.x - PLAYER_RADIUS < s.maxX &&
   p.z + PLAYER_RADIUS > s.minZ && p.z - PLAYER_RADIUS < s.maxZ &&
@@ -26,7 +27,7 @@ export function movePlayer(p: Player, dx: number, dz: number, dt: number, solids
       }
     }
     const oldY = p.y;
-    p.vy -= 22 * dt / steps;
+    p.vy -= GRAVITY * dt / steps;
     p.y += p.vy * dt / steps;
     p.grounded = false;
     for (const s of solids) {
