@@ -1,37 +1,105 @@
+import { SOUND_SAMPLE_RATE, synthesizeAmbience, synthesizeSound, type SoundKind } from './soundDesign';
+
+export type FootstepSurface = 'sand' | 'metal';
+const VARIANTS = 5;
+const SOUND_KINDS: SoundKind[] = ['sand', 'metal', 'landSand', 'landMetal', 'rifle', 'pistol', 'bolt', 'reload', 'swap', 'knife', 'hurt', 'dry', 'hit', 'head', 'win', 'loss', 'draw'];
+
 export class RangeAudio {
   private ctx?: AudioContext;
-  volume = 0.5;
+  private master?: GainNode;
+  private ambienceGain?: GainNode;
+  private ambienceSource?: AudioBufferSourceNode;
+  private sounds = new Map<SoundKind, AudioBuffer[]>();
+  private volumeValue = .5;
+  private active = false;
+  private lastVariant = new Map<SoundKind, number>();
+
+  get volume() { return this.volumeValue; }
+  set volume(value: number) {
+    if (!Number.isFinite(value)) return;
+    this.volumeValue = Math.max(0, Math.min(1, value));
+    if (this.ctx && this.master) {
+      const gain = this.master.gain, now = this.ctx.currentTime;
+      gain.cancelScheduledValues(now);
+      gain.setTargetAtTime(this.volumeValue, now, .025);
+    }
+  }
+
   async start() {
-    this.ctx ??= new AudioContext();
+    if (!this.ctx) {
+      this.ctx = new AudioContext();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = this.volumeValue;
+      this.master.connect(this.ctx.destination);
+      for (const [kindIndex, kind] of SOUND_KINDS.entries()) {
+        const count = ['sand', 'metal', 'landSand', 'landMetal'].includes(kind) ? VARIANTS : 2;
+        const buffers: AudioBuffer[] = [];
+        for (let variant = 0; variant < count; variant++) {
+          const samples = synthesizeSound(kind, 1507 + kindIndex * 191 + variant * 71);
+          const buffer = this.ctx.createBuffer(1, samples.length, SOUND_SAMPLE_RATE);
+          buffer.copyToChannel(samples, 0); buffers.push(buffer);
+        }
+        this.sounds.set(kind, buffers);
+      }
+      const channels = synthesizeAmbience(7907);
+      const ambience = this.ctx.createBuffer(2, channels[0].length, SOUND_SAMPLE_RATE);
+      channels.forEach((samples, channel) => ambience.copyToChannel(samples, channel));
+      this.ambienceSource = this.ctx.createBufferSource();
+      this.ambienceSource.buffer = ambience; this.ambienceSource.loop = true;
+      this.ambienceGain = this.ctx.createGain();
+      this.ambienceGain.gain.value = this.active ? .8 : 0;
+      this.ambienceSource.connect(this.ambienceGain); this.ambienceGain.connect(this.master);
+      this.ambienceSource.start();
+    }
     if (this.ctx.state === 'suspended') await this.ctx.resume();
   }
-  private tone(frequency: number, duration: number, volume: number, type: OscillatorType = 'sine', delay = 0) {
-    if (!this.ctx || this.volume === 0) return;
-    const t = this.ctx.currentTime + delay, osc = this.ctx.createOscillator(), gain = this.ctx.createGain();
-    osc.type = type; osc.frequency.setValueAtTime(frequency, t); osc.frequency.exponentialRampToValueAtTime(frequency * 0.45, t + duration);
-    gain.gain.setValueAtTime(volume * this.volume, t); gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
-    osc.connect(gain); gain.connect(this.ctx.destination); osc.start(t); osc.stop(t + duration);
+
+  /** Only the ambience bed is gated; the final shot/sting can decay over the match bumper. */
+  setActive(active: boolean) {
+    this.active = active;
+    if (!this.ctx || !this.ambienceGain) return;
+    const now = this.ctx.currentTime, gain = this.ambienceGain.gain;
+    gain.cancelScheduledValues(now); gain.setTargetAtTime(active ? .8 : 0, now, active ? .45 : .075);
   }
-  private noise(duration: number, volume: number, cutoff: number) {
-    if (!this.ctx || this.volume === 0) return;
-    const buffer = this.ctx.createBuffer(1, this.ctx.sampleRate * duration, this.ctx.sampleRate);
-    const channel = buffer.getChannelData(0);
-    for (let i = 0; i < channel.length; i++) channel[i] = Math.random() * 2 - 1;
-    const source = this.ctx.createBufferSource(), filter = this.ctx.createBiquadFilter(), gain = this.ctx.createGain();
-    source.buffer = buffer; filter.type = 'lowpass'; filter.frequency.value = cutoff;
-    gain.gain.setValueAtTime(volume * this.volume, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
-    source.connect(filter); filter.connect(gain); gain.connect(this.ctx.destination); source.start();
+
+  private play(kind: SoundKind, level = 1, rate = 1) {
+    if (!this.ctx || !this.master || this.volumeValue === 0) return;
+    const buffers = this.sounds.get(kind);
+    if (!buffers) return;
+    // Avoid the same boot sample twice in a row without cycling predictably.
+    const previous = this.lastVariant.get(kind) ?? -1;
+    let variant = Math.floor(Math.random() * buffers.length);
+    if (variant === previous) variant = (variant + 1) % buffers.length;
+    this.lastVariant.set(kind, variant);
+    const source = this.ctx.createBufferSource(), gain = this.ctx.createGain();
+    source.buffer = buffers[variant];
+    source.playbackRate.value = rate;
+    gain.gain.value = level;
+    source.connect(gain); gain.connect(this.master);
+    source.onended = () => { source.disconnect(); gain.disconnect(); };
+    source.start();
   }
-  shot() { this.noise(0.3, 0.62, 4300); this.tone(115, 0.27, 0.65); this.tone(67, 0.22, 0.18, 'triangle', 0.09); }
-  pistolShot() { this.noise(.12, .4, 5600); this.tone(175, .11, .38); this.tone(650, .025, .05, 'triangle', .05); }
-  swap() { this.noise(.09, .075, 1700); this.tone(480, .035, .035, 'triangle', .09); }
-  melee() { this.noise(.22, .14, 1200); }
-  botShot(distance: number) { const level = Math.max(.025, .26 / (1 + distance / 12)); this.noise(.28, level, 3600); this.tone(115, .24, level); this.tone(67, .18, level * .3, 'triangle', .07); }
-  hurt() { this.noise(.08, .1, 500); this.tone(65, .12, .14); }
-  bolt() { this.noise(0.065, 0.17, 2800); this.tone(420, 0.045, 0.07, 'square'); }
-  hit(head: boolean) { this.tone(head ? 1300 : 950, 0.12, 0.18, 'triangle'); this.tone(1900, 0.1, 0.1, 'sine', 0.025); }
-  reload() { this.noise(0.14, 0.12, 2200); this.tone(300, 0.08, 0.09, 'square'); }
-  step() { this.noise(0.09, 0.065, 500); }
-  dry() { this.tone(240, 0.04, 0.1, 'square'); }
+
+  shot() { this.play('rifle', .8, .98 + Math.random() * .04); }
+  pistolShot() { this.play('pistol', .65, .98 + Math.random() * .04); }
+  swap() { this.play('swap', .25); }
+  melee() { this.play('knife', .4); }
+  botShot(distance: number) {
+    if (!Number.isFinite(distance)) return;
+    this.play('rifle', Math.max(.025, .38 / (1 + Math.max(0, distance) / 11)), .94);
+  }
+  hurt() { this.play('hurt', .4); }
+  bolt() { this.play('bolt', .31); }
+  hit(head: boolean) { this.play(head ? 'head' : 'hit', head ? .45 : .35); }
+  reload() { this.play('reload', .3); }
+  dry() { this.play('dry', .28); }
+  step(surface: FootstepSurface = 'sand', intensity = 1) {
+    if (!Number.isFinite(intensity)) return;
+    this.play(surface, .28 * Math.max(.15, Math.min(1.5, intensity)) * (.9 + Math.random() * .2), .93 + Math.random() * .14);
+  }
+  land(surface: FootstepSurface = 'sand', intensity = 1) {
+    if (!Number.isFinite(intensity)) return;
+    this.play(surface === 'metal' ? 'landMetal' : 'landSand', .33 * Math.max(.2, Math.min(1.8, intensity)), .96 + Math.random() * .08);
+  }
+  roundEnd(outcome: 'win' | 'loss' | 'draw') { this.play(outcome, .7); }
 }

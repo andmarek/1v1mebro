@@ -14,13 +14,13 @@ import { Ray } from '@babylonjs/core/Culling/ray';
 import { ImageProcessingConfiguration } from '@babylonjs/core/Materials/imageProcessingConfiguration';
 import { buildArena } from './arena';
 import { settingsMarkup, setupSettings } from './settings';
-import { RangeAudio } from './audio';
+import { RangeAudio, type FootstepSurface } from './audio';
 import { bulletDamage, resolveCover, traceCover } from './ballistics';
 import { ImpactMarks } from './impacts';
 import { buildRifle } from './weapon';
 import { buildPistol } from './pistol';
 import { type WeaponSlot } from './loadout';
-import { ViewMotion, WALK_BOB_RATE } from './viewMotion';
+import { ViewMotion, WALK_BOB_RATE, SPRINT_BOB_RATE, CROUCH_BOB_RATE } from './viewMotion';
 import { DEFAULT_MATCH_RULES, allowsDamage, type MatchRules, type CombatVector, type DamageSource } from './match';
 import { matchSetupMarkup, setupMatch } from './matchSetup';
 import { selectMeleeTarget, MELEE_DAMAGE } from './melee';
@@ -30,6 +30,7 @@ import { CombatEffects } from './combatEffects';
 import { MatchSimulation } from './matchSimulation';
 import { DEFAULT_ROUND_OPTIONS, type RoundOptions } from './rounds';
 import { roundUIMarkup, setupRoundUI } from './roundUI';
+import { RoundOutro } from './roundOutro';
 import { ARENA_SPAWNS, INITIAL_SPAWN, chooseSpawn, type SpawnPoint } from './spawning';
 import { combatFeedbackMarkup, setupCombatFeedback } from './combatFeedback';
 
@@ -95,6 +96,8 @@ let previousSpawnId = INITIAL_SPAWN.id;
 const combatFeedback = setupCombatFeedback(id => id === 'player' ? 'YOU' : `ENEMY ${String(Number(id.slice(4)) + 1).padStart(2, '0')}`);
 const knifeModel = buildKnife(scene, camera);
 const combatEffects = new CombatEffects(scene);
+const outro = new RoundOutro();
+let outroCuePlayed = false;
 let rules: MatchRules = { ...DEFAULT_MATCH_RULES };
 let damageUntil = 0, lastAttacker = 0;
 const viewMotion = new ViewMotion();
@@ -115,7 +118,7 @@ function notify(message: string) { $('notification').textContent = message; noti
 function clearInput() { movement.cancelJump(); keys.clear(); aimingMouse = aimingToggle = rightMouseDownHandled = false; dragging = false; pendingFire = false; pendingJump = false; mouseFiredOnDown = false; dragDistance = 0; }
 function pause() {
   if (!running) return;
-  updateHud(); running = false; clearInput(); hud.hidden = true; menu.hidden = false;
+  updateHud(); running = false; audio.setActive(false); clearInput(); hud.hidden = true; menu.hidden = false;
   $('play-label').textContent = 'RETURN TO THE RANGE';
   $('start-note').textContent = `${kills} eliminations · ${life.deaths} deaths · ${points.toLocaleString()} points`;
   if (document.pointerLockElement) document.exitPointerLock();
@@ -128,6 +131,7 @@ async function play() {
     fallback = document.pointerLockElement !== canvas;
   } catch { fallback = true; }
   started = true; $('new-match').hidden = false; running = true; clearInput(); menu.hidden = true; hud.hidden = false;
+  audio.setActive(true);
   viewMotion.resetLook(yaw, pitch);
   canvas.focus(); lastFrame = performance.now(); accumulator = 0;
   if (fallback) {
@@ -136,6 +140,7 @@ async function play() {
   } else $('input-hint').textContent = 'WASD MOVE / RMB AIM / Q SWAP / E KNIFE / R RELOAD / ESC PAUSE';
 }
 function reset() {
+  outro.reset(); outroCuePlayed = false; hud.classList.remove('round-ending', 'round-banner');
   simulation.reset(rules, roundOptions); previousSpawnId = INITIAL_SPAWN.id;
   yaw = now = 0; pitch = 0.024;
   movement.reset(); viewMotion.reset(yaw, pitch); cameraEyeY = eyeHeight = 1.65;
@@ -151,11 +156,10 @@ function reset() {
   updateHud();
 }
 const matchSetup = setupMatch((next, options) => { rules = { ...next }; roundOptions = { ...options }; reset(); updateRuleSummary(); void play(); });
-const roundUI = setupRoundUI({ rematch: () => { reset(); void play(); }, newMatch: () => matchSetup.open() });
+const roundUI = setupRoundUI({ rematch: () => { reset(); void play(); }, newMatch: () => matchSetup.open(), viewStandings: () => outro.skip() });
 function finishRound() {
-  if (simulation.round.phase !== 'finished') return;
-  running = false; clearInput(); updateHud();
-  for (const target of arena.targets) target.setCombatPose(false, 0, 0, Infinity);
+  if (simulation.round.phase !== 'finished' || !outro.begin()) return;
+  running = false; audio.setActive(false); clearInput(); travelSpeed = 0; sprinting = false; updateHud();
   if (document.pointerLockElement) document.exitPointerLock();
 }
 function updateRuleSummary() {
@@ -327,6 +331,11 @@ function damageEnemy(index: number, damage: number, source: DamageSource, head =
   }
 }
 
+// Query only on actual footfalls/landings, using cached map surfaces rather than height guesses.
+function footstepSurface(): FootstepSurface {
+  const ray = new Ray(new Vector3(player.x, player.y + .08, player.z), new Vector3(0, -1, 0), .18);
+  return traceCover(ray, arena.cover)[0]?.surface.material === 'metal' ? 'metal' : 'sand';
+}
 function fixedUpdate(dt: number) {
   const tick = simulation.advance(dt, () => chooseSpawn(ARENA_SPAWNS, botSnapshots(), canSee, arena.solids, previousSpawnId));
   now = simulation.now;
@@ -361,12 +370,12 @@ function fixedUpdate(dt: number) {
   if (motion.landed) {
     stepDistance = 0;
     viewMotion.land(motion.landingSpeed);
-    if (motion.landingSpeed > 4) audio.step();
+    if (motion.landingSpeed > 4) audio.land(footstepSurface(), Math.min(1.6, motion.landingSpeed / 7));
   }
   if (player.grounded && motion.distance > .00001) {
     stepDistance += motion.distance;
-    const stride = motion.sprinting ? 1.08 : movement.crouching ? .75 : Math.PI / WALK_BOB_RATE;
-    if (stepDistance >= stride) { audio.step(); stepDistance %= stride; }
+    const stride = Math.PI / (motion.sprinting ? SPRINT_BOB_RATE : movement.crouching ? CROUCH_BOB_RATE : WALK_BOB_RATE);
+    if (stepDistance >= stride) { audio.step(footstepSurface(), movement.crouching ? .4 : motion.sprinting ? 1.25 : .85); stepDistance %= stride; }
   }
   if (boltSoundAt && now >= boltSoundAt) { if (loadout.active === 0) audio.bolt(); boltSoundAt = 0; }
   positionCamera();
@@ -442,11 +451,11 @@ function updateBotCombat(dt: number) {
   }
 }
 const smooth = (v: number) => v * v * (3 - 2 * v);
-function positionCamera() {
+function positionCamera(aim = loadout.weapon.ads) {
   const eyeY = Math.min(cameraEyeY + viewMotion.cameraY, player.y + movement.height - .08);
   camera.position.set(player.x, eyeY, player.z);
   camera.rotation.set(pitch + viewMotion.cameraPitch, yaw, viewMotion.cameraRoll);
-  const ads = smooth(loadout.weapon.ads);
+  const ads = smooth(aim);
   camera.fov = .98 + (loadout.spec.aimFov - .98) * ads + .045 * viewMotion.sprint * (1 - ads);
 }
 function updateHud() {
@@ -457,7 +466,7 @@ function updateHud() {
   $('health-bar').style.width = `${life.health}%`;
   $('health-status').classList.toggle('low', life.health < 40);
   $('protection').textContent = rules.botsShoot && life.alive && now < life.protectedUntil ? `PROTECTED ${Math.ceil(life.protectedUntil - now)}s` : '';
-  $('respawn-screen').hidden = life.alive;
+  $('respawn-screen').hidden = life.alive || simulation.round.phase === 'finished';
   $('respawn-label').textContent = now >= life.respawnAt && !life.alive ? 'WAITING FOR A SAFE SPAWN' : `ENEMY ${String(lastAttacker + 1).padStart(2, '0')} / INTERVENTION / RESPAWN IN ${Math.max(0, life.respawnAt - now).toFixed(1)}s`;
   $('kills').textContent = String(kills).padStart(2, '0');
   $('quicks').textContent = String(quicks).padStart(2, '0');
@@ -490,22 +499,35 @@ engine.runRenderLoop(() => {
   const frame = performance.now(), dt = Math.min((frame - lastFrame) / 1000, 0.05); lastFrame = frame;
   if (running) {
     accumulator += dt;
-    while (accumulator >= 1 / 120) { fixedUpdate(1 / 120); accumulator -= 1 / 120; }
+    while (running && accumulator >= 1 / 120) { fixedUpdate(1 / 120); accumulator -= 1 / 120; }
+  }
+  if (outro.presenting && !document.hidden) outro.advance(dt);
+  if (outro.stage === 'banner' && !outroCuePlayed) {
+    outroCuePlayed = true;
+    const winners = simulation.round.snapshot.winnerIds;
+    audio.roundEnd(winners.length > 1 ? 'draw' : winners.includes('player') ? 'win' : 'loss');
+  }
+  const presenting = outro.presenting;
+  hud.classList.toggle('round-ending', presenting);
+  hud.classList.toggle('round-banner', outro.stage === 'banner');
+  if (running || presenting) {
+    const renderNow = now + (presenting ? outro.elapsed : 0);
+    const aim = loadout.weapon.ads * (presenting ? outro.aimScale : 1);
     viewMotion.update(dt, {
-      yaw, pitch, ads: loadout.weapon.ads, speed: travelSpeed, grounded: player.grounded,
+      yaw, pitch, ads: aim, speed: travelSpeed, grounded: player.grounded,
       sprinting, crouching: movement.crouching,
-      strafeSpeed: movement.vx * Math.cos(yaw) - movement.vz * Math.sin(yaw),
+      strafeSpeed: presenting ? 0 : movement.vx * Math.cos(yaw) - movement.vz * Math.sin(yaw),
     });
-    positionCamera();
+    positionCamera(aim);
     const recoil = viewMotion.gunKick;
-    const ads = smooth(loadout.weapon.ads), shotAge = now - loadout.lastShots[loadout.active];
+    const ads = smooth(aim), shotAge = renderNow - loadout.lastShots[loadout.active];
     const sway = viewMotion.weaponY;
-    const reloadT = loadout.weapon.reloadAt ? 1 - (loadout.weapon.reloadAt - now) / loadout.spec.reloadSeconds : 0;
-    const inspectT = (now - inspectStarted) / 2.4;
+    const reloadT = loadout.weapon.reloadAt ? Math.max(0, Math.min(1, 1 - (loadout.weapon.reloadAt - renderNow) / loadout.spec.reloadSeconds)) : 0;
+    const inspectT = (renderNow - inspectStarted) / 2.4;
     const inspect = inspectT >= 0 && inspectT < 1 ? Math.sin(inspectT * Math.PI) : 0;
-    const knifing = life.alive && melee.active(now);
-    knifeModel.root.setEnabled(knifing); if (knifing) knifeModel.updatePose(melee.progress(now));
-    viewmodel.root.setEnabled(life.alive && !knifing && loadout.active === 0 && loadout.weapon.ads < .75);
+    const knifing = life.alive && melee.active(renderNow);
+    knifeModel.root.setEnabled(knifing); if (knifing) knifeModel.updatePose(melee.progress(renderNow));
+    viewmodel.root.setEnabled(life.alive && !knifing && loadout.active === 0 && aim < .75);
     pistolModel.root.setEnabled(life.alive && !knifing && loadout.active === 1);
     const model = loadout.active === 0 ? viewmodel : pistolModel;
     if (loadout.active === 0) viewmodel.updatePose(ads, recoil, sway, shotAge, reloadT, !!loadout.weapon.reloadAt, inspect);
@@ -515,27 +537,35 @@ engine.runRenderLoop(() => {
     model.root.rotation.x += viewMotion.weaponPitch;
     model.root.rotation.y += viewMotion.weaponYaw;
     model.root.rotation.z += viewMotion.weaponRoll;
-    const holster = smooth(loadout.holsterAmount(now));
+    const holster = smooth(loadout.holsterAmount(renderNow));
     model.root.position.y -= holster * .38;
     model.root.rotation.x += holster * .35;
     model.flash.setEnabled(!loadout.swapping && shotAge < (loadout.active === 0 ? .045 : .035));
-    $('scope').style.opacity = life.alive && !knifing && loadout.active === 0 ? String(Math.max(0, Math.min(1, (loadout.weapon.ads - .55) / .2))) : '0';
-    $('scope').classList.toggle('accurate', loadout.active === 0 && loadout.weapon.ads >= .72);
-    $('crosshair').style.opacity = !life.alive ? '0' : String(1 - Math.min(1, loadout.weapon.ads * 2));
+    $('scope').style.opacity = life.alive && !knifing && loadout.active === 0 ? String(Math.max(0, Math.min(1, (aim - .55) / .2))) : '0';
+    $('scope').classList.toggle('accurate', loadout.active === 0 && aim >= .72);
+    $('crosshair').style.opacity = !life.alive ? '0' : String(1 - Math.min(1, aim * 2));
     $('crosshair').style.setProperty('--spread', `${10 + (!player.grounded ? 13 : 0) + recoil * 12}px`);
-    $('damage-overlay').style.opacity = now < damageUntil ? '.9' : life.alive && life.health < 40 ? '.28' : '0';
-    $('hitmarker').style.opacity = now < hitUntil ? '1' : '0';
-    $('feedback').style.opacity = now < feedbackUntil ? '1' : '0';
-    $('notification').style.opacity = now < notificationUntil ? '1' : '0';
-    combatFeedback.update(now, player, yaw);
+    $('damage-overlay').style.opacity = renderNow < damageUntil ? '.9' : life.alive && life.health < 40 ? '.28' : '0';
+    $('hitmarker').style.opacity = renderNow < hitUntil ? '1' : '0';
+    $('feedback').style.opacity = renderNow < feedbackUntil ? '1' : '0';
+    $('notification').style.opacity = renderNow < notificationUntil ? '1' : '0';
+    combatFeedback.update(renderNow, player, yaw);
+    if (presenting) {
+      combatEffects.update(renderNow);
+      if (boltSoundAt && renderNow >= boltSoundAt) { if (loadout.active === 0) audio.bolt(); boltSoundAt = 0; }
+      for (const target of arena.targets) {
+        const pose = botCombat.pose(target.index, renderNow);
+        target.setCombatPose(pose.aiming, pose.yaw, pose.pitch, pose.shotAge, pose.reloading, pose.reloadProgress, pose.boltProgress);
+      }
+    }
     if (frame - lastHud > 80) { updateHud(); lastHud = frame; }
   } else if (!started) {
     const t = frame / 1000;
     camera.position.set(24 + Math.sin(t * 0.035) * 2, 15, -27);
     camera.setTarget(new Vector3(0, 3.5, 3));
   }
-  if (!running) { $('scope').style.opacity = '0'; viewmodel.root.setEnabled(false); pistolModel.root.setEnabled(false); knifeModel.root.setEnabled(false); $('damage-overlay').style.opacity = '0'; }
-  roundUI.render(simulation.round.snapshot, 'player', running || (started && simulation.round.phase === 'finished'));
+  if (!running && !presenting) { $('scope').style.opacity = '0'; viewmodel.root.setEnabled(false); pistolModel.root.setEnabled(false); knifeModel.root.setEnabled(false); $('damage-overlay').style.opacity = '0'; }
+  roundUI.render(simulation.round.snapshot, 'player', running || (started && simulation.round.phase === 'finished'), outro.stage);
   scene.render();
 });
 window.addEventListener('resize', () => engine.resize());

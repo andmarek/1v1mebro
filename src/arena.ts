@@ -18,6 +18,7 @@ import type { Solid } from './simulation';
 import { towerGeometry } from './tower';
 import { captureGeometry, TARGET_HEALTH, type CoverSurface, type CoverMaterial } from './ballistics';
 import { buildBotWeapon, botFlashMaterial } from './botWeapon';
+import { enemyMaterials, enemyGeometry, poseArm, rifleContact } from './enemyAppearance';
 import { createPatrol, PATROL_ROUTES, PatrolNavigation, resetPatrol, walkingPose, type Patrol } from './patrol';
 
 export type Target = { root: TransformNode; home: Vector3; meshes: Mesh[]; index: number; health: number; respawnAt: number; patrol: Patrol; animate: (dt: number, now: number) => void; reset: () => void; setCombatPose: (aiming: boolean, yaw: number, pitch: number, shotAge: number, reloading?: boolean, reloadProgress?: number, boltProgress?: number) => void };
@@ -31,7 +32,7 @@ export function buildArena(scene: Scene, shadows: ShadowGenerator) {
     m.specularColor = rough ? new Color3(0.06, 0.06, 0.06) : new Color3(0.35, 0.35, 0.35);
     return m;
   };
-  const { sand, concrete, steel, rust, teal, ochre, pale, black, orange, targetPlate, targetHead } = arenaMaterials(scene);
+  const { sand, concrete, steel, rust, teal, ochre, pale, black, orange } = arenaMaterials(scene);
   let seed = 1947;
   const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
   const staticMeshes: Mesh[] = [];
@@ -323,90 +324,136 @@ export function buildArena(scene: Scene, shadows: ShadowGenerator) {
   const navigation = new Map<number, PatrolNavigation>();
   for (const floor of new Set(floors)) navigation.set(floor, new PatrolNavigation(solids, floor));
   const enemyFlash = botFlashMaterial(scene);
+  const soldier = enemyMaterials(scene);
   PATROL_ROUTES.forEach((route, index) => {
     const home = new Vector3(route[0].x, floors[index], route[0].z);
     const root = new TransformNode(`enemy-${index}`, scene); root.position.copyFrom(home);
     const body = new TransformNode('walking body', scene); body.parent = root;
     const upperBody = new TransformNode('aiming torso', scene); upperBody.parent = body;
-    const meshes: Mesh[] = [];
-    const attach = (mesh: Mesh, parent: TransformNode, mat: Material, head = false) => {
-      mesh.parent = parent; finish(mesh, mat); mesh.metadata = { target: index, head }; meshes.push(mesh); return mesh;
-    };
-    const part = (name: string, x: number, y: number, z: number, w: number, h: number, d: number, mat: Material, parent = body) => {
-      const mesh = roundedBox(name, w, h, d, Math.min(.025, h * .2, w * .2, d * .2), scene);
-      boxUVs(mesh, w, h, d); mesh.position.set(x, y, z); return attach(mesh, parent, mat);
-    };
-    const pivot = (name: string, x: number, y: number, parent = body) => {
-      const joint = new TransformNode(name, scene); joint.parent = parent; joint.position.set(x, y, 0); return joint;
-    };
-    const capsule = (name: string, height: number, diameter: number, y: number, parent: TransformNode, mat: Material) => {
-      const mesh = MeshBuilder.CreateCapsule(name, { height, radius: diameter / 2, tessellation: 12, subdivisions: 2 }, scene);
-      mesh.position.y = y; return attach(mesh, parent, mat);
-    };
+    const geometry = enemyGeometry(scene, shadows, index, soldier.detailFabric);
+    const { joint, hit, decor, capsule, box: detail, ellipsoid } = geometry;
+    const meshes = geometry.hits;
     const legs = [-1, 1].map(side => {
-      const hip = pivot('hip joint', side * .14, .86);
-      capsule('upper leg', .40, .18, -.20, hip, steel);
-      const knee = pivot('knee joint', 0, -.4, hip);
-      capsule('lower leg', .40, .14, -.20, knee, steel);
-      const ankle = pivot('ankle joint', 0, -.4, knee);
-      part('walking boot', 0, 0, -.045, .18, .11, .29, black, ankle);
+      const hip = joint('hip joint', body, side * .14, .86);
+      capsule('trouser thigh hit volume', hip, soldier.uniform, .40, .18, -.20);
+      detail('cargo pocket', hip, soldier.uniform, side * .092, -.21, .014, .035, .15, .13);
+      detail('cargo pocket flap', hip, soldier.webbing, side * .11, -.16, .014, .008, .018, .13);
+      const knee = joint('knee joint', hip, 0, -.4);
+      capsule('trouser shin hit volume', knee, soldier.uniform, .40, .14, -.20);
+      ellipsoid('creased fabric over knee', knee, soldier.uniform, 0, -.02, 0, .155, .14, .145);
+      ellipsoid('shaped knee pad', knee, soldier.rubber, 0, -.035, -.063, .115, .14, .045);
+      const ankle = joint('ankle joint', knee, 0, -.4);
+      const boot = roundedBox('walking boot', .18, .11, .29, .022, scene);
+      boot.position.set(0, 0, -.045); hit(boot, ankle, soldier.rubber);
+      detail('boot cuff', ankle, soldier.uniform, 0, .065, .013, .15, .09, .13);
+      detail('boot sole welt', ankle, soldier.webbing, 0, -.043, -.045, .177, .018, .285);
+      for (let lace = 0; lace < 3; lace++) detail('boot lace', ankle, soldier.webbing, 0, .057, -.09 + lace * .025, .085, .007, .009);
       return { hip, knee, ankle };
     });
-    part('waist belt', 0, .87, 0, .4, .13, .23, steel);
+    const belt = roundedBox('waist belt hit volume', .4, .13, .23, .025, scene); belt.position.y = .87;
+    hit(belt, body, soldier.vest);
+    detail('belt buckle', body, soldier.metal, 0, .87, -.124, .063, .045, .018);
+    detail('utility pouch', body, soldier.vest, .225, .90, .04, .065, .14, .12);
+    // Preserve the original lathed torso hit volume. Its slimmer visible garment is independent of hit testing.
     const torso = MeshBuilder.CreateLathe('formed enemy torso', { shape: [new Vector3(0, 0, 0), new Vector3(.19, 0, 0), new Vector3(.22, .18, 0), new Vector3(.28, .43, 0), new Vector3(.3, .55, 0), new Vector3(.25, .63, 0), new Vector3(.15, .7, 0), new Vector3(0, .7, 0)], tessellation: 32 }, scene);
-    torso.position.y = .83; torso.scaling.z = .5; attach(torso, upperBody, targetPlate);
+    torso.position.y = .83; torso.scaling.z = .5; hit(torso, upperBody, soldier.uniform, false, false);
+    const jacket = MeshBuilder.CreateLathe('tailored field jacket', { shape: [new Vector3(0, 0, 0), new Vector3(.19, 0, 0), new Vector3(.175, .12, 0), new Vector3(.21, .32, 0), new Vector3(.235, .47, 0), new Vector3(.21, .55, 0), new Vector3(.12, .60, 0), new Vector3(0, .60, 0)], tessellation: 24 }, scene);
+    jacket.position.y = .9; jacket.scaling.z = .57; decor(jacket, upperBody, soldier.uniform);
+    for (const side of [-1, 1]) ellipsoid('shaped jacket shoulder', upperBody, soldier.uniform, side * .245, 1.43, 0, .19, .17, .19);
+    ellipsoid('jacket collar', upperBody, soldier.uniform, 0, 1.49, 0, .27, .09, .21);
+    detail('front shaped plate carrier', upperBody, soldier.vest, 0, 1.23, -.133, .37, .40, .058);
+    detail('rear plate carrier', upperBody, soldier.vest, 0, 1.24, .134, .35, .38, .055);
+    for (const side of [-1, 1]) {
+      detail('shoulder strap front', upperBody, soldier.webbing, side * .125, 1.42, -.125, .045, .15, .022);
+      detail('shoulder strap back', upperBody, soldier.webbing, side * .125, 1.42, .13, .045, .15, .022);
+      detail('shoulder strap bridge', upperBody, soldier.webbing, side * .125, 1.49, 0, .045, .025, .26);
+      detail('vest side webbing', upperBody, soldier.webbing, side * .216, 1.13, 0, .02, .075, .23);
+    }
+    for (let column = -1; column <= 1; column++) {
+      detail('magazine pouch', upperBody, soldier.vest, column * .109, 1.14, -.188, .094, .15, .065);
+      detail('pouch retention strap', upperBody, soldier.webbing, column * .109, 1.16, -.225, .026, .12, .008);
+    }
+    for (const y of [1.33, 1.37]) detail('stitched chest webbing', upperBody, soldier.webbing, 0, y, -.165, .27, .012, .006);
+    detail('subdued team patch', upperBody, soldier.marker, 0, 1.39, -.17, .063, .038, .007);
+    detail('rear team patch', upperBody, soldier.marker, 0, 1.38, .167, .075, .037, .007);
     const arms = [-1, 1].map(side => {
-      const shoulder = pivot('shoulder joint', side * .32, 1.43, upperBody); shoulder.rotation.z = side * .12;
-      capsule('upper arm', .30, .15, -.15, shoulder, targetPlate);
-      const elbow = pivot('elbow joint', 0, -.29, shoulder); elbow.rotation.x = -.2;
-      capsule('forearm', .28, .13, -.14, elbow, steel);
-      capsule('gloved hand', .15, .13, -.31, elbow, black);
-      return { shoulder, elbow };
+      const shoulder = joint('shoulder joint', upperBody, side * .32, 1.43);
+      capsule('upper sleeve hit volume', shoulder, soldier.uniform, .30, .15, -.15);
+      detail('sleeve seam', shoulder, soldier.webbing, 0, -.19, -.075, .014, .09, .006);
+      const elbow = joint('elbow joint', shoulder, 0, -.29);
+      capsule('rolled sleeve hit volume', elbow, soldier.uniform, .28, .13, -.14);
+      detail('cuff', elbow, soldier.webbing, 0, -.25, 0, .138, .035, .133);
+      capsule('gloved hand hit volume', elbow, soldier.rubber, .15, .13, -.31);
+      const glove = joint('rifle gripping glove', elbow, 0, -.28);
+      // The legacy capsule remains the hit volume; visible finger/knuckle shapes add no new targets.
+      detail('glove knuckle panel', glove, soldier.vest, 0, -.008, .012, .10, .053, .085);
+      for (let finger = 0; finger < 3; finger++) detail('glove fingers', glove, soldier.rubber, -.03 + finger * .03, -.03, -.037, .024, .046, .05);
+      return { shoulder, elbow, glove, side };
     });
-    part('enemy neck', 0, 1.58, 0, .1, .13, .1, steel, upperBody);
-    const neck = pivot('head turn', 0, 1.8, upperBody);
+    const neckVolume = roundedBox('enemy neck', .1, .13, .1, .02, scene); neckVolume.position.y = 1.58;
+    hit(neckVolume, upperBody, soldier.skin);
+    ellipsoid('high fabric neck gaiter', upperBody, soldier.vest, 0, 1.585, .008, .145, .18, .14);
+    const neck = joint('head turn', upperBody, 0, 1.8);
     const head = MeshBuilder.CreateSphere('head target', { diameter: .32, segments: 24 }, scene);
-    head.scaling.z = .75; attach(head, neck, targetHead, true);
-    part('front chest marker', 0, 1.22, -.14, .13, .17, .025, orange, upperBody);
-    part('back chest marker', 0, 1.22, .14, .13, .17, .025, orange, upperBody);
+    head.scaling.z = .75; hit(head, neck, soldier.skin, true);
+    ellipsoid('matte tactical helmet crown', neck, soldier.helmet, 0, .060, .013, .318, .22, .245);
+    detail('helmet front rim', neck, soldier.rubber, 0, .006, -.115, .255, .028, .028);
+    detail('helmet mounting rail', neck, soldier.metal, .146, .032, .018, .012, .035, .095);
+    detail('helmet side strap left', neck, soldier.webbing, -.13, -.053, -.018, .018, .11, .018);
+    detail('helmet side strap right', neck, soldier.webbing, .13, -.053, -.018, .018, .11, .018);
+    ellipsoid('fabric lower-face mask', neck, soldier.vest, 0, -.075, -.085, .23, .13, .088);
+    for (const side of [-1, 1]) {
+      ellipsoid('ballistic lens', neck, soldier.lens, side * .065, -.014, -.114, .109, .046, .018);
+      detail('goggle frame', neck, soldier.rubber, side * .065, .013, -.111, .117, .01, .015);
+    }
+    detail('goggle bridge', neck, soldier.rubber, 0, -.008, -.124, .025, .023, .013);
+    geometry.flush();
     const patrol = createPatrol(route, navigation.get(home.y)!, index);
-    const gun = buildBotWeapon(scene, upperBody, shadows, steel, black, enemyFlash);
+    const gun = buildBotWeapon(scene, upperBody, shadows, soldier.metal, soldier.rubber, enemyFlash);
+    let aimBlend = 0, torsoYaw = 0, frameDt = 1 / 120;
     const setCombatPose = (aiming: boolean, yaw: number, pitch: number, shotAge: number, reloading = false, reloadProgress = 0, boltProgress = 0) => {
-      const relativeYaw = yaw - patrol.heading;
-      upperBody.rotation.y = aiming ? Math.atan2(Math.sin(relativeYaw), Math.cos(relativeYaw)) : 0;
+      const mix = 1 - Math.exp(-frameDt * 15);
+      aimBlend += ((aiming ? 1 : 0) - aimBlend) * mix;
+      const relativeYaw = aiming ? yaw - patrol.heading : 0;
+      torsoYaw += Math.atan2(Math.sin(relativeYaw - torsoYaw), Math.cos(relativeYaw - torsoYaw)) * mix;
+      upperBody.rotation.y = torsoYaw;
       const reloadDip = reloading ? Math.sin(Math.PI * Math.max(0, Math.min(1, reloadProgress))) : 0;
       const kick = shotAge >= 0 && shotAge < .25 ? Math.exp(-shotAge * 18) : 0;
-      gun.root.position.set(aiming ? .10 : .22, aiming ? 1.16 - reloadDip * .15 : .94, aiming ? -.37 + kick * .055 : -.10);
-      gun.root.rotation.set(aiming ? pitch - reloadDip * .45 + kick * .04 : -.75, 0, aiming ? reloadDip * -.12 : -.15);
+      gun.root.position.set(.10, 1.24 + aimBlend * .27 - reloadDip * .15, -.10 - aimBlend * .07 + kick * .035);
+      gun.root.rotation.set(-.64 * (1 - aimBlend) + pitch * aimBlend - reloadDip * .32 + kick * .025, 0, -.18 * (1 - aimBlend) - reloadDip * .12);
       gun.updateBolt(boltProgress);
       gun.flash.setEnabled(aiming && shotAge >= 0 && shotAge < .05);
-      if (aiming) {
-        // Legs keep their patrol gait while the torso and hands shoulder the weapon.
-        arms[0].shoulder.rotation.set(1.15 + pitch * .6, 0, -.40);
-        arms[1].shoulder.rotation.set(1.10 + pitch * .6, 0, -.40);
-        arms[0].elbow.rotation.x = .10 - reloadDip * .8;
-        arms[1].elbow.rotation.x = -.85 + Math.sin(Math.PI * boltProgress) * .3;
-        neck.rotation.y = 0;
+      const support = rifleContact(gun.root, new Vector3(-.025, .017, -.16));
+      const trigger = rifleContact(gun.root, new Vector3(.013, -.085, .12));
+      // The supporting hand moves to the magazine during reload; the trigger hand works the bolt.
+      if (reloadDip > 0) support.z += reloadDip * .10;
+      if (boltProgress > 0 && boltProgress < 1) {
+        const cycle = Math.sin(Math.PI * boltProgress);
+        trigger.y += cycle * .14; trigger.z += cycle * .055;
       }
+      poseArm(arms[0].shoulder, arms[0].elbow, arms[0].glove, support, -1, gun.root);
+      poseArm(arms[1].shoulder, arms[1].elbow, arms[1].glove, trigger, 1, gun.root);
+      // A slight cheek lean toward the optic makes acquisition readable from the front and flank.
+      neck.position.x = aimBlend * .045; neck.rotation.z = -aimBlend * .11;
+      neck.rotation.x = pitch * aimBlend * .65;
+      neck.rotation.y *= 1 - aimBlend;
     };
     let blend = 0;
     const pose = (now: number) => {
       const gait = walkingPose(patrol.travel, blend);
       root.position.set(patrol.x, home.y, patrol.z); root.rotation.y = patrol.heading;
-      body.position.y = gait.bob + .008; body.rotation.x = gait.lean; upperBody.rotation.y = 0;
+      body.position.y = gait.bob + .008; body.rotation.x = gait.lean;
       const angles = [gait.leftLeg, gait.rightLeg], knees = [gait.leftKnee, gait.rightKnee];
       legs.forEach((leg, i) => {
         leg.hip.rotation.x = angles[i]; leg.knee.rotation.x = knees[i];
         leg.ankle.rotation.x = -angles[i] - knees[i] - gait.lean;
       });
-      arms[0].shoulder.rotation.set(gait.leftArm, 0, -.12); arms[1].shoulder.rotation.set(gait.rightArm, 0, .12);
-      arms.forEach(arm => { arm.elbow.rotation.x = -.2; });
-      setCombatPose(false, 0, 0, Infinity);
+
       neck.rotation.y = Math.sin(now * .7 + index * 1.8) * .12 * (1 - blend);
     };
-    const reset = () => { const target = targets[index]; if (target) target.health = TARGET_HEALTH; resetPatrol(patrol); blend = 0; pose(0); setCombatPose(false, 0, 0, Infinity); };
+    const reset = () => { const target = targets[index]; if (target) target.health = TARGET_HEALTH; resetPatrol(patrol); blend = 0; aimBlend = 0; torsoYaw = 0; pose(0); setCombatPose(false, 0, 0, Infinity); };
     targets.push({ root, home, meshes, index, health: TARGET_HEALTH, respawnAt: 0, patrol, reset, setCombatPose,
-      animate: (dt, now) => { blend += ((patrol.walking ? 1 : 0) - blend) * Math.min(1, dt * 10); pose(now); } });
+      animate: (dt, now) => { frameDt = dt; blend += ((patrol.walking ? 1 : 0) - blend) * Math.min(1, dt * 10); pose(now); } });
     reset();
   });
   return { solids, targets, cover };

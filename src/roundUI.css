@@ -2,6 +2,21 @@
 #round-countdown>span{font:10px var(--mono);letter-spacing:2px;color:#d9e4cc;text-align:center;padding:0 16px}
 #round-countdown>b{font:800 clamp(110px,20vh,190px)/1 'Barlow Condensed',Arial;color:var(--lime);margin:15px 0 12px}
 #round-countdown>p{font:10px var(--mono);letter-spacing:1.5px;color:#d9e4cc;text-align:center;padding:0 16px}
+#round-end{position:fixed;inset:0;z-index:6;display:flex;align-items:center;justify-content:center;pointer-events:none;background:linear-gradient(0deg,#06100e95,transparent 40%,#06100e65);text-align:center}
+.round-end-card{width:min(620px,calc(100vw - 48px));padding:30px 30px 22px;background:linear-gradient(90deg,#0b151800,#0b1518d9 18%,#0b1518e6 82%,#0b151800);animation:round-end-arrive .45s ease-out both;text-shadow:0 2px 18px #000a}
+.round-end-card>span{font:9px var(--mono);letter-spacing:3px;color:#d0d9c3}
+.round-end-card>h2{font:800 clamp(64px,12vw,110px)/1 'Barlow Condensed',Arial;letter-spacing:4px;margin:12px 0 10px;color:var(--lime)}
+#round-end[data-outcome="loss"] h2{color:#edb4a1}
+.round-end-card>p{font:10px/1.8 var(--mono);letter-spacing:1px;color:#c6d3be;margin:0}
+.round-end-stats{display:flex;justify-content:center;gap:42px;border-top:1px solid #dbe6ce30;margin:22px auto 0;padding-top:18px;max-width:380px}
+.round-end-stats>div{display:flex;flex-direction:column;gap:7px}.round-end-stats span{font:8px var(--mono);letter-spacing:1px;color:#b7c7aa}.round-end-stats b{font:600 34px/1 'Barlow Condensed',Arial;color:#e7ecd7}
+#round-view-standings{pointer-events:auto;display:inline-flex;gap:18px;align-items:center;margin:24px 0 0;padding:10px 14px;background:#0e1918a8;border:1px solid #cadba740;color:#e0e8cf;font:9px var(--mono);letter-spacing:1px;cursor:pointer}
+#round-view-standings:hover,#round-view-standings:focus-visible{border-color:var(--lime);outline:1px solid var(--lime);outline-offset:4px}
+#hud.round-ending #crosshair,#hud.round-ending #respawn-screen,#hud.round-ending .hud-top button{visibility:hidden}
+#hud.round-banner #feedback,#hud.round-banner #hitmarker,#hud.round-banner #notification{visibility:hidden}
+@keyframes round-end-arrive{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:reduce){.round-end-card{animation:none}}
+@media(max-width:620px){.round-end-card{padding:24px 12px 18px}.round-end-stats{gap:28px}.round-end-card>span{letter-spacing:1.5px}}
 #round-results{padding:0;color:#ecebdd;background:#111b16f7;border:1px solid #dbe6ce40;width:min(840px,calc(100vw - 36px));max-width:none;max-height:calc(100dvh - 36px);box-shadow:0 25px 120px #0009}
 #round-results::backdrop{background:#07110de0;backdrop-filter:blur(7px)}
 .round-results-shell{display:flex;flex-direction:column;max-height:calc(100dvh - 38px)}
