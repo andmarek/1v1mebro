@@ -1,6 +1,6 @@
 import './style.css';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
-import { Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Matrix, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
@@ -19,19 +19,22 @@ import { bulletDamage, resolveCover, traceCover } from './ballistics';
 import { ImpactMarks } from './impacts';
 import { buildRifle } from './weapon';
 import { buildPistol } from './pistol';
-import { type WeaponSlot } from './loadout';
+import { WEAPONS, type WeaponSlot } from './loadout';
 import { ViewMotion, WALK_BOB_RATE, SPRINT_BOB_RATE, CROUCH_BOB_RATE } from './viewMotion';
 import { DEFAULT_MATCH_RULES, allowsDamage, type MatchRules, type CombatVector, type DamageSource } from './match';
 import { matchSetupMarkup, setupMatch } from './matchSetup';
 import { selectMeleeTarget, MELEE_DAMAGE } from './melee';
 import { buildKnife } from './knife';
-import { playerHitDistance } from './botCombat';
+import { playerHitDistance, type BotShot } from './botCombat';
 import { CombatEffects } from './combatEffects';
 import { MatchSimulation } from './matchSimulation';
 import { DEFAULT_ROUND_OPTIONS, type RoundOptions } from './rounds';
 import { roundUIMarkup, setupRoundUI } from './roundUI';
 import { RoundOutro } from './roundOutro';
-import { ReplayRecorder, type KillReplay } from './killReplay';
+import { ReplayRecorder, type KillReplay, type ReplayCue } from './killReplay';
+import { DeathReplay } from './deathReplay';
+import { ReplayActors } from './replayActors';
+import { deathReplayMarkup, setupDeathReplayUI } from './deathReplayUI';
 import { ReplayScene } from './replayScene';
 import { ARENA_SPAWNS, INITIAL_SPAWN, chooseSpawn, type SpawnPoint } from './spawning';
 import { combatFeedbackMarkup, setupCombatFeedback } from './combatFeedback';
@@ -59,6 +62,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   ${settingsMarkup}
   ${matchSetupMarkup}
   ${roundUIMarkup}
+  ${deathReplayMarkup}
   <div id="loading"><span>DEADBOLT</span><p>PREPARING THE RANGE…</p></div>
 `;
 
@@ -100,7 +104,12 @@ const knifeModel = buildKnife(scene, camera);
 const combatEffects = new CombatEffects(scene);
 const outro = new RoundOutro();
 const replayScene = new ReplayScene(camera, [...arena.targets.map(target => target.root), viewmodel.root, pistolModel.root, knifeModel.root]);
-const recorder = new ReplayRecorder(replayScene.width);
+const replayActors = new ReplayActors(replayScene.width, arena.targets.map(target => target.index));
+const recorder = new ReplayRecorder(replayActors.width);
+const replayBody = arena.createReplayBody();
+const deathReplay = new DeathReplay();
+const lastBotShots = new Map<number, BotShot & { at: number }>();
+let pendingDeathReplay = false, playerTravel = 0, deathRestoreLock = false;
 let replay: KillReplay | null = null;
 let pendingReplay = false, replayWasShowing = false;
 let finalKiller = '';
@@ -135,11 +144,10 @@ async function play() {
   $('error').textContent = '';
   try { await audio.start(); } catch { /* The game also works without audio. */ }
   try {
-    await canvas.requestPointerLock();
-    fallback = document.pointerLockElement !== canvas;
+    if (!deathReplay.active) { await canvas.requestPointerLock(); fallback = document.pointerLockElement !== canvas; }
   } catch { fallback = true; }
   started = true; $('new-match').hidden = false; running = true; clearInput(); menu.hidden = true; hud.hidden = false;
-  audio.setActive(true);
+  audio.setActive(!deathReplay.active);
   viewMotion.resetLook(yaw, pitch);
   canvas.focus(); lastFrame = performance.now(); accumulator = 0;
   if (fallback) {
@@ -148,6 +156,7 @@ async function play() {
   } else $('input-hint').textContent = 'WASD MOVE / RMB AIM / Q SWAP / E KNIFE / R RELOAD / ESC PAUSE';
 }
 function reset() {
+  deathReplay.reset(); pendingDeathReplay = deathRestoreLock = false; lastBotShots.clear(); playerTravel = 0; deathBoltAt = -Infinity; replayBody.reset(); replayBody.root.setEnabled(false);
   outro.reset(); outroCuePlayed = false; recorder.reset(); replay = null; pendingReplay = replayWasShowing = false; finalKiller = '';
   replayHitUntil = -Infinity; hud.classList.remove('round-ending', 'round-banner', 'round-replay');
   simulation.reset(rules, roundOptions); previousSpawnId = INITIAL_SPAWN.id;
@@ -166,7 +175,9 @@ function reset() {
 }
 const matchSetup = setupMatch((next, options) => { rules = { ...next }; roundOptions = { ...options }; reset(); updateRuleSummary(); void play(); });
 const roundUI = setupRoundUI({ rematch: () => { reset(); void play(); }, newMatch: () => matchSetup.open(), viewStandings: () => outro.skip(), skipReplay: () => outro.skipReplay() });
+const deathReplayUI = setupDeathReplayUI(() => { deathReplay.skip(); completeDeathReplay(); });
 function finishRound() {
+  if (pendingDeathReplay || deathReplay.active) return;
   if (simulation.round.phase !== 'finished' || !outro.begin()) return;
   pendingReplay = simulation.round.finishReason === 'kill-limit' && finalKiller === 'player';
   running = false; audio.setActive(false); clearInput(); travelSpeed = 0; sprinting = false; updateHud();
@@ -184,7 +195,10 @@ $('fullscreen').addEventListener('click', async () => {
   try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); }
   catch { $('error').textContent = 'Fullscreen is unavailable in this browser panel. You can still play in the window.'; }
 });
-document.addEventListener('pointerlockchange', () => { if (running && !fallback && document.pointerLockElement !== canvas) pause(); });
+document.addEventListener('pointerlockchange', () => {
+  if (document.pointerLockElement === canvas) { fallback = false; $('input-hint').textContent = 'WASD MOVE / RMB AIM / Q SWAP / E KNIFE / R RELOAD / ESC PAUSE'; return; }
+  if (running && !fallback && !pendingDeathReplay && !deathReplay.active) pause();
+});
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
 window.addEventListener('blur', () => { if (running) pause(); });
 document.addEventListener('contextmenu', event => {
@@ -195,6 +209,7 @@ document.addEventListener('contextmenu', event => {
   rightMouseDownHandled = false;
 });
 window.addEventListener('keydown', e => {
+  if (pendingDeathReplay || deathReplay.active) return;
   if (!running || ((!simulation.active || !life.alive) && e.code !== 'Escape')) return;
   if (['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'KeyC', 'KeyQ', 'KeyE', 'Digit1', 'Digit2'].includes(e.code)) e.preventDefault();
   keys.add(e.code);
@@ -373,6 +388,7 @@ function fixedUpdate(dt: number) {
   }, dt, arena.solids, adsSeconds)!;
   pendingJump = false;
   if (previousSlot !== loadout.active) viewMotion.clearRecoil();
+  playerTravel += motion.distance;
   travelSpeed = motion.distance / dt;
   sprinting = motion.sprinting;
   const ease = (rate: number) => 1 - Math.exp(-rate * dt);
@@ -425,7 +441,7 @@ function knifeAttack() {
   inspectStarted = -10; viewMotion.clearRecoil(); audio.melee(); recorder.cue(now, 'knife');
 }
 function respawnPlayer(spawn: SpawnPoint) {
-  recorder.reset();
+  recorder.reset(); playerTravel = 0;
   previousSpawnId = spawn.id;
   yaw = spawn.yaw; pitch = .024; cameraEyeY = player.y + 1.65; eyeHeight = 1.65;
   viewMotion.reset(yaw, pitch); travelSpeed = stepDistance = 0; sprinting = false;
@@ -440,7 +456,7 @@ function updateBotCombat(dt: number) {
   }
   for (const shot of shots) {
     if (!simulation.active) break;
-    simulation.botFired(shot.botId);
+    simulation.botFired(shot.botId); lastBotShots.set(shot.botId, { ...shot, at: now });
     const origin = new Vector3(shot.origin.x, shot.origin.y, shot.origin.z), direction = new Vector3(shot.direction.x, shot.direction.y, shot.direction.z);
     const distance = Vector3.Distance(origin, new Vector3(player.x, player.y + movement.height * .55, player.z));
     const hitDistance = playerHitDistance(shot.origin, shot.direction, { ...player, height: movement.height, alive: life.alive });
@@ -448,15 +464,19 @@ function updateBotCombat(dt: number) {
     const ray = new Ray(origin, direction, endDistance);
     const cover = traceCover(ray, arena.cover)[0];
     const blocked = cover && cover.entry.distance < endDistance;
-    combatEffects.shot(origin, origin.add(direction.scale(blocked ? cover.entry.distance : endDistance)), now);
+    const shotEnd = origin.add(direction.scale(blocked ? cover.entry.distance : endDistance));
+    combatEffects.shot(origin, shotEnd, now);
+    recorder.cue(now, 'sniper', { actorId: `bot-${shot.botId}`, origin: [origin.x, origin.y, origin.z], end: [shotEnd.x, shotEnd.y, shotEnd.z] });
     if (blocked) impacts.stamp({ hit: cover.entry, material: cover.surface.material, exit: false }, now);
     audio.botShot(distance);
     if (shot.hit && !blocked && allowsDamage(rules, 'bot') && now >= life.protectedUntil && life.alive) {
       const hit = simulation.damagePlayer(shot.botId, shot.damage);
       if (!hit.applied) continue;
+      recorder.cue(now, 'hit', { actorId: `bot-${shot.botId}` });
       combatFeedback.damage(shot.origin, now); damageUntil = now + .35; audio.hurt();
       const died = hit.died;
       if (died) {
+        pendingDeathReplay = true;
         lastAttacker = shot.botId; clearInput(); melee.reset(); movement.reset(); travelSpeed = 0; sprinting = false;
         loadout.weapon.reloadAt = 0;
       }
@@ -508,18 +528,92 @@ function updateHud() {
   $('action').classList.toggle('ready', loadout.weapon.ads >= .72 && !loadout.weapon.reloadAt && !loadout.swapping);
   $('fps').textContent = `${Math.round(engine.getFps())} FPS`;
 }
+
+function captureReplayFrame(data: Float32Array) {
+  replayScene.capture(data, Number($('scope').style.opacity), $('scope').classList.contains('accurate'));
+  replayActors.capture(data, { ...player, yaw, pitch, height: movement.height, travel: playerTravel,
+    walking: travelSpeed > .1, ads: loadout.weapon.ads, shotAt: loadout.lastShots[loadout.active], alive: life.alive, weapon: loadout.active },
+    arena.targets.map(target => ({ bot: { id: target.index, x: target.patrol.x, y: target.home.y, z: target.patrol.z, alive: !target.respawnAt },
+      pose: botCombat.pose(target.index, now), heading: target.patrol.heading, ads: target.aimAmount(), lastShot: lastBotShots.get(target.index) })), now);
+}
+
+function playReplayCue(cue: ReplayCue, elapsed: number, perspective = 'player') {
+  const actor = cue.actorId ?? 'player';
+  if (cue.kind === 'sniper') {
+    if (actor === perspective) audio.shot();
+    else if (cue.origin) audio.botShot(Vector3.Distance(camera.position, Vector3.FromArray(cue.origin)));
+    if (cue.origin && cue.end) combatEffects.shot(Vector3.FromArray(cue.origin), Vector3.FromArray(cue.end), cue.at);
+  } else if (cue.kind === 'pistol') audio.pistolShot();
+  else if (cue.kind === 'knife') audio.melee();
+  else if (cue.kind === 'bolt') audio.bolt();
+  else if (actor === perspective) { audio.hit(cue.kind === 'headshot'); replayHeadshot = cue.kind === 'headshot'; replayHitUntil = elapsed + .19; }
+}
+
+let deathBoltAt = -Infinity;
+function renderDeathReplay(dt: number) {
+  const clip = deathReplay.clip!, elapsed = deathReplay.replayElapsed, at = clip.start + elapsed;
+  const sample = clip.sample(elapsed);
+  replayScene.apply(sample); impacts.showAt(at);
+  const attacker = replayActors.attacker(sample, deathReplay.attacker), victim = replayActors.player(sample);
+  // The camera sits at the bot's firing origin, so recorded spread rays align with its sights.
+  arena.targets[deathReplay.attacker].root.setEnabled(false);
+  camera.position.set(attacker.x, attacker.y, attacker.z); camera.rotation.set(attacker.pitch, attacker.yaw, 0);
+  const aim = attacker.ads, ads = smooth(aim), shotAge = at - attacker.shotAt;
+  camera.fov = .98 + (WEAPONS[0].aimFov - .98) * ads;
+  pistolModel.root.setEnabled(false); knifeModel.root.setEnabled(false);
+  viewmodel.root.setEnabled(aim < .75);
+  const kick = shotAge >= 0 && shotAge < .3 ? Math.exp(-shotAge * 18) : 0;
+  viewmodel.updatePose(ads, kick, 0, shotAge, Math.min(1, attacker.reloadProgress + Math.max(0, at - clip.end) / WEAPONS[0].reloadSeconds), attacker.reloading, 0);
+  viewmodel.flash.setEnabled(shotAge >= 0 && shotAge < .045);
+  $('scope').style.opacity = String(Math.max(0, Math.min(1, (aim - .55) / .2))); $('scope').classList.toggle('accurate', aim >= .72);
+  $('damage-overlay').style.opacity = '0';
+  // This rig is cosmetic only; it is hidden and unpickable during live gameplay.
+  Object.assign(replayBody.patrol, { x: victim.x, z: victim.z, heading: victim.yaw + Math.PI, travel: victim.travel, walking: victim.walking });
+  replayBody.home.y = victim.y;
+  replayBody.animate(dt, at); replayBody.setCombatPose(victim.ads > .4, victim.yaw + Math.PI, -victim.pitch, at - victim.shotAt);
+  replayBody.root.scaling.y = victim.height / 1.98;
+  replayBody.weaponRoot.setEnabled(victim.weapon === 0); replayBody.root.setEnabled(victim.alive);
+  const projected = Vector3.Project(new Vector3(victim.x, victim.y + victim.height + .15, victim.z), Matrix.Identity(), camera.getTransformationMatrix(), camera.viewport.toGlobal(1, 1));
+  deathReplayUI.victim(projected.x, projected.y, victim.alive && projected.z >= 0 && projected.z <= 1);
+  for (const cue of clip.drainCues(elapsed)) playReplayCue(cue, elapsed, `bot-${deathReplay.attacker}`);
+  if (shotAge >= .35 && shotAge < .81 && attacker.shotAt > deathBoltAt) { audio.bolt(); deathBoltAt = attacker.shotAt; }
+  combatEffects.update(at);
+  $('hitmarker').classList.toggle('headshot', replayHeadshot); $('hitmarker').style.opacity = elapsed < replayHitUntil ? '1' : '0';
+}
+
+function completeDeathReplay() {
+  const clip = deathReplay.clip; if (!clip) return;
+  const last = clip.frames[clip.frames.length - 1];
+  replayScene.apply({ before: last, after: last, mix: 0 }); replayBody.root.setEnabled(false);
+  const restoreLock = deathRestoreLock; deathRestoreLock = false;
+  deathReplay.reset(); deathReplayUI.render(null); accumulator = 0;
+  combatEffects.clear(); impacts.showAt(now); replayHitUntil = -Infinity; deathBoltAt = -Infinity;
+  $('hitmarker').style.opacity = '0'; $('scope').style.opacity = '0';
+  if (simulation.round.phase === 'finished') { finishRound(); return; }
+  simulation.completeDeathReplay(); audio.setActive(running); canvas.focus();
+  if (running && restoreLock) {
+    // Older browsers return void; embedded panels can reject a request without a new gesture.
+    void (async () => {
+      try { await canvas.requestPointerLock(); fallback = document.pointerLockElement !== canvas; } catch { fallback = true; }
+      if (fallback) $('input-hint').textContent = 'DRAG / ARROWS LOOK / RMB AIM / Q SWAP / E KNIFE / CLICK FIRE / ESC PAUSE';
+    })();
+  }
+}
+
 engine.runRenderLoop(() => {
   const frame = performance.now(), dt = Math.min((frame - lastFrame) / 1000, 0.05); lastFrame = frame;
-  if (running) {
+  if (running && !pendingDeathReplay && !deathReplay.active) {
     accumulator += dt;
-    while (running && accumulator >= 1 / 120) { fixedUpdate(1 / 120); accumulator -= 1 / 120; }
+    while (running && !pendingDeathReplay && !deathReplay.active && accumulator >= 1 / 120) { fixedUpdate(1 / 120); accumulator -= 1 / 120; }
   }
+  if (deathReplay.active && running && !document.hidden) { deathReplay.advance(dt); if (deathReplay.complete) completeDeathReplay(); }
   if (outro.presenting && !document.hidden) outro.advance(dt);
   if (outro.stage === 'banner' && !outroCuePlayed) {
     outroCuePlayed = true;
     const winners = simulation.round.snapshot.winnerIds;
     audio.roundEnd(winners.length > 1 ? 'draw' : winners.includes('player') ? 'win' : 'loss');
   }
+  const deathShowing = deathReplay.showing && running;
   const replaying = outro.stage === 'replay' && replay !== null;
   if (replayWasShowing && !replaying && replay) {
     const last = replay.frames[replay.frames.length - 1];
@@ -530,22 +624,19 @@ engine.runRenderLoop(() => {
   if (replaying && !replayWasShowing) combatEffects.clear();
   replayWasShowing = replaying;
   const presenting = outro.presenting;
-  hud.classList.toggle('round-ending', presenting);
+  hud.classList.toggle('round-ending', presenting || deathShowing);
   hud.classList.toggle('round-banner', outro.stage === 'banner');
-  hud.classList.toggle('round-replay', replaying);
-  if (replaying && replay) {
+  hud.classList.toggle('round-replay', replaying || deathShowing);
+  if (deathShowing) {
+    renderDeathReplay(dt);
+  } else if (replaying && replay) {
     const elapsed = outro.replayElapsed;
     impacts.showAt(replay.start + elapsed);
     const lens = replayScene.apply(replay.sample(elapsed));
     $('scope').style.opacity = String(lens.scope); $('scope').classList.toggle('accurate', lens.accurate);
     $('damage-overlay').style.opacity = '0';
-    for (const cue of replay.drainCues(elapsed)) {
-      if (cue.kind === 'sniper') audio.shot();
-      else if (cue.kind === 'pistol') audio.pistolShot();
-      else if (cue.kind === 'knife') audio.melee();
-      else if (cue.kind === 'bolt') audio.bolt();
-      else { audio.hit(cue.kind === 'headshot'); replayHeadshot = cue.kind === 'headshot'; replayHitUntil = elapsed + .19; }
-    }
+    for (const cue of replay.drainCues(elapsed)) playReplayCue(cue, elapsed);
+    combatEffects.update(replay.start + elapsed);
     $('hitmarker').classList.toggle('headshot', replayHeadshot);
     $('hitmarker').style.opacity = elapsed < replayHitUntil ? '1' : '0';
   } else if (running || presenting) {
@@ -596,8 +687,17 @@ engine.runRenderLoop(() => {
         target.setCombatPose(pose.aiming, pose.yaw, pose.pitch, pose.shotAge, pose.reloading, pose.reloadProgress, pose.boltProgress);
       }
     }
-    if ((running && simulation.active && life.alive) || pendingReplay) {
-      recorder.record(now, data => replayScene.capture(data, Number($('scope').style.opacity), $('scope').classList.contains('accurate')), pendingReplay);
+    if ((running && simulation.active && life.alive) || pendingReplay || pendingDeathReplay) {
+      recorder.record(now, captureReplayFrame, pendingReplay || pendingDeathReplay);
+      if (pendingDeathReplay) {
+        pendingDeathReplay = false;
+        const clip = recorder.clip(`bot-${lastAttacker}`);
+        if (deathReplay.begin(clip, lastAttacker)) {
+          accumulator = 0; audio.setActive(false); clearInput(); combatEffects.clear(); replayHitUntil = -Infinity; replayBody.reset();
+          deathRestoreLock = document.pointerLockElement === canvas;
+          if (document.pointerLockElement) document.exitPointerLock();
+        } else finishRound();
+      }
       if (pendingReplay) {
         replay = recorder.clip(); pendingReplay = false;
         if (replay) outro.scheduleReplay(replay.duration);
@@ -611,6 +711,7 @@ engine.runRenderLoop(() => {
   }
   if (!running && !presenting) { $('scope').style.opacity = '0'; viewmodel.root.setEnabled(false); pistolModel.root.setEnabled(false); knifeModel.root.setEnabled(false); $('damage-overlay').style.opacity = '0'; }
   roundUI.render(simulation.round.snapshot, 'player', running || (started && simulation.round.phase === 'finished'), outro.stage, replay ? outro.replayElapsed / replay.duration : 0);
+  deathReplayUI.render(deathShowing ? deathReplay.attacker : null, deathReplay.clip ? deathReplay.replayElapsed / deathReplay.clip.duration : 0, simulation.round.phase === 'finished');
   scene.render();
 });
 window.addEventListener('resize', () => engine.resize());

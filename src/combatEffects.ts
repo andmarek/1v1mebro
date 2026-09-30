@@ -1,6 +1,9 @@
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { CreateLines } from '@babylonjs/core/Meshes/Builders/linesBuilder';
+// Register tracer shaders before the first shot; lazy LinesMesh setup can race effect creation.
+import '@babylonjs/core/Shaders/color.vertex';
+import '@babylonjs/core/Shaders/color.fragment';
 import type { LinesMesh } from '@babylonjs/core/Meshes/linesMesh';
 import type { Scene } from '@babylonjs/core/scene';
 
