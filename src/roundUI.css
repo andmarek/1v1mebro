@@ -14,6 +14,17 @@
 #round-view-standings:hover,#round-view-standings:focus-visible{border-color:var(--lime);outline:1px solid var(--lime);outline-offset:4px}
 #hud.round-ending #crosshair,#hud.round-ending #respawn-screen,#hud.round-ending .hud-top button{visibility:hidden}
 #hud.round-banner #feedback,#hud.round-banner #hitmarker,#hud.round-banner #notification{visibility:hidden}
+#hud.round-replay .hud-top,#hud.round-replay .stats,#hud.round-replay .hud-bottom,#hud.round-replay #feedback,#hud.round-replay #notification,#hud.round-replay #kill-feed,#hud.round-replay #damage-directions,#hud.round-replay #damage-overlay{visibility:hidden}
+#final-kill-replay{position:fixed;inset:0;z-index:6;pointer-events:none;border:1px solid #dbe6ce40;background:linear-gradient(#07120e90,transparent 16%,transparent 82%,#07120e90);color:#e5ebd5}
+#final-kill-replay header{display:flex;align-items:center;gap:12px;padding:28px 30px;border-top:3px solid var(--lime)}
+#final-kill-replay header b{font:700 26px 'Barlow Condensed',Arial;letter-spacing:2px}
+#final-kill-replay header>span:last-child{font:9px var(--mono);letter-spacing:1px;color:#c8d3bc}
+.replay-dot{width:7px;height:7px;border-radius:50%;background:var(--lime);box-shadow:0 0 12px #c8dc9770}
+#final-kill-replay footer{position:absolute;bottom:28px;left:30px;right:30px;display:flex;align-items:center;justify-content:space-between;gap:20px;font:8px/1.7 var(--mono);letter-spacing:1px;color:#c8d3bc}
+#replay-skip{pointer-events:auto;flex-shrink:0;padding:12px 16px;background:#101c18c9;border:1px solid #cadba760;color:#e5ebd5;font:9px var(--mono);letter-spacing:1px;cursor:pointer}
+#replay-skip span{margin-left:20px;color:#b1c397}#replay-skip:focus-visible,#replay-skip:hover{outline:1px solid var(--lime);outline-offset:3px}
+#replay-progress{position:absolute;bottom:0;left:0;right:0;height:3px;background:#cadba725}#replay-progress i{display:block;height:100%;background:var(--lime)}
+@media(max-width:620px){#final-kill-replay header{padding:20px;gap:9px}#final-kill-replay header>span:last-child{font-size:7px}#final-kill-replay footer{left:20px;right:20px}#final-kill-replay footer>span{max-width:150px;font-size:7px}}
 @keyframes round-end-arrive{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @media(prefers-reduced-motion:reduce){.round-end-card{animation:none}}
 @media(max-width:620px){.round-end-card{padding:24px 12px 18px}.round-end-stats{gap:28px}.round-end-card>span{letter-spacing:1.5px}}

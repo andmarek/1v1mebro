@@ -74,7 +74,7 @@ function impactMaterial(scene: Scene, kind: CoverMaterial) {
 
 /** At most 64 mesh/geometry objects and three shared textures, regardless of how long the range runs. */
 export class ImpactMarks {
-  private readonly pool: { mesh: Mesh; until: number }[] = [];
+  private readonly pool: { mesh: Mesh; born: number; until: number }[] = [];
   private readonly materials: Record<'metal' | 'wood' | 'concrete', StandardMaterial>;
   enabled = true;
   constructor(private readonly scene: Scene) {
@@ -92,11 +92,13 @@ export class ImpactMarks {
     if (!mark && this.pool.length < IMPACT_LIMIT) {
       const mesh = new Mesh('projected bullet hole', this.scene);
       mesh.isPickable = false; mesh.receiveShadows = true;
-      mark = { mesh, until: 0 }; this.pool.push(mark);
+      mark = { mesh, born: now, until: 0 }; this.pool.push(mark);
     }
     mark ??= this.pool.reduce((oldest, item) => item.until < oldest.until ? item : oldest);
     const vertices = new VertexData(); Object.assign(vertices, data); vertices.applyToMesh(mark.mesh, true);
-    mark.mesh.material = this.materials[material]; mark.mesh.setEnabled(true); mark.until = now + IMPACT_LIFETIME;
+    mark.mesh.material = this.materials[material]; mark.mesh.setEnabled(true); mark.born = now; mark.until = now + IMPACT_LIFETIME;
   }
+  /** Replays reveal surviving decals when their impact occurred, without changing their lifetime. */
+  showAt(now: number) { this.pool.forEach(mark => mark.mesh.setEnabled(this.enabled && mark.born <= now && mark.until > now)); }
   update(now: number) { this.pool.forEach(mark => { if (mark.until && now >= mark.until) { mark.mesh.setEnabled(false); mark.until = 0; } }); }
 }
