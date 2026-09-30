@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173** in a desktop browser and click **Enter the range**. Chrome or Edge in a regular browser window is recommended for mouse capture. If an embedded preview blocks Pointer Lock, the game falls back to dragging or using arrow keys to look and clicking to shoot. Q toggles aiming in either mode.
+Open **http://127.0.0.1:5173** in a desktop browser and click **Enter the range**. Chrome or Edge in a regular browser window is recommended for mouse capture. If an embedded preview blocks Pointer Lock, the game falls back to dragging or using arrow keys to look and clicking to shoot. Right click aims in either mode; enable **Toggle aim** in Controls to aim with a click rather than a hold.
 
 ```sh
 npm test       # movement feel, collision, weapon timing/swaps, patrol, and penetration tests
@@ -26,16 +26,16 @@ npm run preview
 | Hold Shift + forward movement | Sprint |
 | Space | Jump; use WASD to steer in the air |
 | Hold C or Ctrl | Lower stance / move slowly |
-| Hold right mouse | Aim down sights |
-| Q | Toggle aiming, useful on a trackpad |
+| Right mouse | Aim down sights; hold by default, or click with Toggle aim enabled |
+| Q | Swap between the sniper and pistol |
 | Left mouse | Fire |
 | R | Reload |
 | 1 / 2 | Select sniper / FIELD-9 pistol |
-| Mouse wheel / X | Swap weapons |
+| Mouse wheel | Swap weapons |
 | V | Inspect the equipped weapon |
 | Esc | Pause / release mouse |
 
-Open **Settings** from the range menu or the HUD gear. Controls, Graphics, Audio, and Practice tabs include sensitivity, inverted vertical look, render resolution, shadow detail, impact marks, an FPS counter, volume, walking enemies, scope-in time, and a practice reset. Preferences save locally when storage is available; **Restore defaults** resets them. Opening settings pauses the game.
+Open **Settings** from the range menu or the HUD gear. Controls, Graphics, Audio, and Practice tabs include sensitivity, inverted vertical look, toggle aim, render resolution, shadow detail, impact marks, an FPS counter, volume, walking enemies, scope-in time, and a practice reset. Preferences save locally when storage is available; **Restore defaults** resets them. Opening settings pauses the game.
 
 Bullet holes use three shared procedural textures for metal, wood, and concrete, projected onto the actual surface triangles. Entry marks appear on all struck cover; exit marks appear only when a bullet passes through. A pool capped at 64 reuses old marks, and marks clear after 30 seconds of game time. The graphics toggle hides existing holes and suppresses new ones without changing damage or penetration.
 

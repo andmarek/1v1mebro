@@ -40,8 +40,8 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <div id="menu">
     <header class="menu-top"><div class="wordmark">DB<span>DEADBOLT / FIELD LAB</span></div><span class="prototype"><i></i> PLAYABLE PROTOTYPE <b>V.01</b></span></header>
     <main class="menu-content"><section class="intro"><div class="eyebrow"><span>01 / THE SCRAPYARD</span><i></i> SINGLE PLAYER</div><h1>ONE SHOT.<br><em>MAKE IT COUNT.</em></h1><p>A rifle. A sidearm. A dusty yard. The split second<br>between lining it up and landing the shot.</p><div class="tags"><span>SNIPER + SIDEARM</span><span>9 PATROLLING ENEMIES</span><span>FREE ROAM</span></div><div class="menu-actions"><button id="play" class="play-button"><span id="play-label">ENTER THE RANGE</span><span>↗</span></button><button id="settings-open" class="menu-settings" aria-label="Open settings">⚙ <span>SETTINGS</span></button></div><div class="start-note" id="start-note">Mouse + keyboard recommended · click to capture mouse</div><p id="error" role="alert"></p></section>
-    <aside class="range-panel"><div class="panel-heading"><span>FIELD NOTES</span><b>QUICKSCOPE / 101</b></div><div class="lesson"><span>01</span><div><b>Line it up.</b><p>Keep the target near your crosshair as you move.</p></div></div><div class="lesson"><span>02</span><div><b>Scope. Fire. Release.</b><p>Hold right click and fire as the scope settles. Hits in the first 180 ms of accuracy earn a quickscope bonus.</p></div></div><div class="lesson"><span>03</span><div><b>Keep moving.</b><p>Sprint with Shift. Jump with Space and steer with A/D. Swap to your sidearm with 1 / 2 or the mouse wheel while the bolt cycles.</p></div></div></aside></main>
-    <footer class="menu-bottom"><div><kbd>W A S D</kbd> MOVE <kbd>SHIFT</kbd> SPRINT <kbd>SPACE</kbd> JUMP <kbd>C</kbd> CROUCH</div><div><kbd>RMB</kbd> AIM <kbd>Q</kbd> TOGGLE AIM <kbd>LMB</kbd> FIRE <kbd>R</kbd> RELOAD <kbd>1 / 2</kbd> SWAP <kbd>V</kbd> INSPECT <kbd>ESC</kbd> PAUSE</div><button id="fullscreen" aria-label="Toggle fullscreen">⛶ FULLSCREEN</button></footer>
+    <aside class="range-panel"><div class="panel-heading"><span>FIELD NOTES</span><b>QUICKSCOPE / 101</b></div><div class="lesson"><span>01</span><div><b>Line it up.</b><p>Keep the target near your crosshair as you move.</p></div></div><div class="lesson"><span>02</span><div><b>Scope. Fire. Release.</b><p>Aim with right click and fire as the scope settles. Hits in the first 180 ms of accuracy earn a quickscope bonus.</p></div></div><div class="lesson"><span>03</span><div><b>Keep moving.</b><p>Sprint with Shift. Jump with Space and steer with A/D. Swap to your sidearm with Q or the mouse wheel while the bolt cycles.</p></div></div></aside></main>
+    <footer class="menu-bottom"><div><kbd>W A S D</kbd> MOVE <kbd>SHIFT</kbd> SPRINT <kbd>SPACE</kbd> JUMP <kbd>C</kbd> CROUCH</div><div><kbd>RMB</kbd> AIM <kbd>Q</kbd> SWAP <kbd>LMB</kbd> FIRE <kbd>R</kbd> RELOAD <kbd>1 / 2</kbd> SELECT <kbd>V</kbd> INSPECT <kbd>ESC</kbd> PAUSE</div><button id="fullscreen" aria-label="Toggle fullscreen">⛶ FULLSCREEN</button></footer>
   </div>
   ${settingsMarkup}
   <div id="loading"><span>DEADBOLT</span><p>PREPARING THE RANGE…</p></div>
@@ -82,6 +82,7 @@ const movement = new MovementController();
 const keys = new Set<string>();
 let now = 0, running = false, started = false, dragging = false, fallback = false;
 let aimingMouse = false, aimingToggle = false, pendingFire = false, pendingJump = false;
+let toggleAim = false, rightMouseDownHandled = false;
 let mouseFiredOnDown = false, dragDistance = 0;
 let yaw = 0, pitch = 0.024, recoil = 0, bob = 0, eyeHeight = 1.65;
 let cameraEyeY = 1.65, landingDip = 0, sprintBlend = 0, motionBlend = 0, stepDistance = 0;
@@ -92,7 +93,7 @@ let inspectStarted = -10;
 let accumulator = 0, lastFrame = performance.now(), lastHud = 0;
 const impacts = new ImpactMarks(scene);
 function notify(message: string) { $('notification').textContent = message; notificationUntil = now + 2.5; }
-function clearInput() { movement.cancelJump(); keys.clear(); aimingMouse = aimingToggle = false; dragging = false; pendingFire = false; pendingJump = false; mouseFiredOnDown = false; dragDistance = 0; }
+function clearInput() { movement.cancelJump(); keys.clear(); aimingMouse = aimingToggle = rightMouseDownHandled = false; dragging = false; pendingFire = false; pendingJump = false; mouseFiredOnDown = false; dragDistance = 0; }
 function pause() {
   if (!running) return;
   running = false; clearInput(); hud.hidden = true; menu.hidden = false;
@@ -110,9 +111,9 @@ async function play() {
   started = true; running = true; clearInput(); menu.hidden = true; hud.hidden = false;
   canvas.focus(); lastFrame = performance.now(); accumulator = 0;
   if (fallback) {
-    $('input-hint').textContent = 'DRAG / ARROWS LOOK / Q AIM / CLICK FIRE / 1 · 2 SWAP / ESC PAUSE';
-    notify('Mouse capture unavailable: drag to look, Q to toggle aim.');
-  } else $('input-hint').textContent = 'WASD MOVE / RMB AIM / R RELOAD / 1 · 2 SWAP / ESC PAUSE';
+    $('input-hint').textContent = 'DRAG / ARROWS LOOK / RMB AIM / Q SWAP / CLICK FIRE / ESC PAUSE';
+    notify('Drag or use arrows to look. Toggle aim is available in Controls.');
+  } else $('input-hint').textContent = 'WASD MOVE / RMB AIM / Q SWAP / R RELOAD / ESC PAUSE';
 }
 function reset() {
   Object.assign(player, { x: 0, y: 0, z: -23, vy: 0, grounded: true });
@@ -134,10 +135,16 @@ $('fullscreen').addEventListener('click', async () => {
 document.addEventListener('pointerlockchange', () => { if (running && !fallback && document.pointerLockElement !== canvas) pause(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
 window.addEventListener('blur', () => { if (running) pause(); });
-document.addEventListener('contextmenu', event => { if (event.target === canvas || running) event.preventDefault(); });
+document.addEventListener('contextmenu', event => {
+  if (event.target === canvas || running) event.preventDefault();
+  // Embedded panels can send a right-click menu event without mouse-down.
+  // Real mouse-down already handles aiming; never toggle twice for one click.
+  if (running && event.target === canvas && event.button === 2 && toggleAim && !rightMouseDownHandled) aimingToggle = !aimingToggle;
+  rightMouseDownHandled = false;
+});
 window.addEventListener('keydown', e => {
   if (!running) return;
-  if (['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'KeyC', 'KeyQ', 'Digit1', 'Digit2', 'KeyX'].includes(e.code)) e.preventDefault();
+  if (['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'KeyC', 'KeyQ', 'Digit1', 'Digit2'].includes(e.code)) e.preventDefault();
   keys.add(e.code);
   // Keyboard look also works in embedded panels that only deliver clicks during a drag.
   if (fallback && e.code.startsWith('Arrow')) {
@@ -149,10 +156,9 @@ window.addEventListener('keydown', e => {
     if (e.code === 'ArrowDown') pitch = Math.max(-1.45, Math.min(1.45, pitch + .05 * lookScale * (invertY ? -1 : 1)));
   }
   if (e.code === 'Space' && !e.repeat) pendingJump = true;
-  if (e.code === 'KeyQ' && !e.repeat) aimingToggle = !aimingToggle;
+  if (e.code === 'KeyQ' && !e.repeat) swap(loadout.requested === 0 ? 1 : 0);
   if (e.code === 'KeyV' && !e.repeat && !loadout.swapping && !loadout.weapon.reloadAt && loadout.weapon.ads < 0.05) inspectStarted = now;
   if (!e.repeat && (e.code === 'Digit1' || e.code === 'Digit2')) swap(e.code === 'Digit1' ? 0 : 1);
-  if (e.code === 'KeyX' && !e.repeat) swap(loadout.requested === 0 ? 1 : 0);
   if (e.code === 'KeyR' && !e.repeat && loadout.reload(now)) { audio.reload(); notify('Reloading'); }
   if (e.code === 'Escape') pause();
 });
@@ -176,7 +182,11 @@ canvas.addEventListener('mousedown', e => {
     if (fallback) dragging = true;
     else { pendingFire = true; mouseFiredOnDown = true; }
   }
-  if (e.button === 2) aimingMouse = true;
+  if (e.button === 2) {
+    rightMouseDownHandled = true;
+    if (toggleAim) aimingToggle = !aimingToggle;
+    else aimingMouse = true;
+  }
 });
 // Some embedded browser panels deliver clicks without mouse-down events.
 // In drag mode, looking around should not consume a round.
@@ -197,6 +207,7 @@ const settings = setupSettings({
   sensitivity: value => { sensitivity = value; }, ads: value => { adsSeconds = value / 1000; },
   volume: value => { audio.volume = value / 100; }, walking: value => { movingTargets = value; },
   invert: value => { invertY = value; }, fps: value => { $('fps').hidden = !value; },
+  toggleAim: value => { toggleAim = value; aimingMouse = aimingToggle = rightMouseDownHandled = false; },
   impacts: value => impacts.setEnabled(value),
   shadows: value => {
     scene.shadowsEnabled = value !== 'off';

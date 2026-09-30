@@ -1,6 +1,7 @@
 type SettingsCallbacks = {
   sensitivity: (value: number) => void; ads: (value: number) => void; volume: (value: number) => void;
   walking: (value: boolean) => void; impacts: (value: boolean) => void; invert: (value: boolean) => void;
+  toggleAim: (value: boolean) => void;
   fps: (value: boolean) => void; shadows: (value: string) => void; resolution: (value: string) => void;
   resetPractice: () => void;
 };
@@ -22,7 +23,8 @@ export const settingsMarkup = `
           <div class="settings-section-heading"><span>01 / INPUT</span><h3>Find your feel.</h3><p>Fine-tune how you look around the range.</p></div>
           <div class="setting-row setting-range"><div><label for="sensitivity">Mouse sensitivity</label><p>Adjust how far the camera turns as you move the mouse.</p></div><div class="setting-input"><output id="sensitivity-value" for="sensitivity">1.0</output><input id="sensitivity" type="range" min="0.3" max="2.5" step="0.1" value="1"></div></div>
           <div class="setting-row"><div><label for="invert-y">Invert vertical look</label><p>Move the mouse up to look down.</p></div><input id="invert-y" class="setting-switch" type="checkbox" role="switch"></div>
-          <div class="settings-controls"><span>FIELD CONTROLS</span><div><b><kbd>W A S D</kbd> Move</b><b><kbd>SHIFT</kbd> Sprint</b><b><kbd>SPACE</kbd> Jump</b><b><kbd>C</kbd> Lower stance</b><b><kbd>RMB / Q</kbd> Aim</b><b><kbd>LMB</kbd> Fire</b><b><kbd>R</kbd> Reload</b><b><kbd>V</kbd> Inspect</b><b><kbd>1 / 2</kbd> Select weapon</b><b><kbd>WHEEL / X</kbd> Swap weapon</b></div><p>In embedded previews, use arrow keys or drag to look.</p></div>
+          <div class="setting-row"><div><label for="toggle-aim">Toggle aim</label><p>Right click once to aim, then again to lower your weapon. When off, hold right click to aim.</p></div><input id="toggle-aim" class="setting-switch" type="checkbox" role="switch"></div>
+          <div class="settings-controls"><span>FIELD CONTROLS</span><div><b><kbd>W A S D</kbd> Move</b><b><kbd>SHIFT</kbd> Sprint</b><b><kbd>SPACE</kbd> Jump</b><b><kbd>C</kbd> Lower stance</b><b><kbd>RMB</kbd> Aim</b><b><kbd>LMB</kbd> Fire</b><b><kbd>R</kbd> Reload</b><b><kbd>V</kbd> Inspect</b><b><kbd>1 / 2</kbd> Select weapon</b><b><kbd>Q / WHEEL</kbd> Swap weapon</b></div><p>In embedded previews, use arrow keys or drag to look. Toggle aim is useful on a trackpad.</p></div>
         </section>
         <section id="panel-graphics" role="tabpanel" aria-labelledby="tab-graphics" tabindex="0" hidden>
           <div class="settings-section-heading"><span>02 / VISUALS</span><h3>Make every shot clear.</h3><p>Balance surface detail with a smooth frame rate.</p></div>
@@ -82,6 +84,7 @@ export function setupSettings(callbacks: SettingsCallbacks) {
   range('ads-speed', 'ads-value', 180, callbacks.ads, n => `${n} ms`);
   toggle('moving', true, callbacks.walking); toggle('impact-marks', true, callbacks.impacts);
   toggle('invert-y', false, callbacks.invert); toggle('show-fps', true, callbacks.fps);
+  toggle('toggle-aim', false, callbacks.toggleAim);
   select('shadow-detail', 'high', callbacks.shadows); select('render-detail', 'balanced', callbacks.resolution);
   const tabs = Array.from(dialog.querySelectorAll<HTMLButtonElement>('[role=tab]'));
   function activate(tab: HTMLButtonElement) {
