@@ -1,36 +1,15 @@
-import { PLAYER_HEALTH, PLAYER_RESPAWN_SECONDS, SPAWN_PROTECTION_SECONDS, type BotSnapshot, type CombatVector, type PlayerSnapshot } from './match';
+import type { BotSnapshot, CombatVector, PlayerSnapshot } from './match';
+import { Firearm } from './simulation';
+import { WEAPONS } from './loadout';
+export { PlayerLife } from './playerLife';
 
-export class PlayerLife {
-  health = PLAYER_HEALTH;
-  deaths = 0;
-  respawnAt = 0;
-  protectedUntil = SPAWN_PROTECTION_SECONDS;
-  get alive() { return this.health > 0; }
-  damage(amount: number, now: number): boolean {
-    if (!this.alive || now < this.protectedUntil || !Number.isFinite(amount) || amount <= 0) return false;
-    this.health = Math.max(0, this.health - amount);
-    if (this.alive) return false;
-    this.deaths++; this.respawnAt = now + PLAYER_RESPAWN_SECONDS;
-    return true;
-  }
-  update(now: number): boolean {
-    if (this.alive || now < this.respawnAt) return false;
-    this.health = PLAYER_HEALTH; this.respawnAt = 0;
-    this.protectedUntil = now + SPAWN_PROTECTION_SECONDS;
-    return true;
-  }
-  reset(now = 0) {
-    this.health = PLAYER_HEALTH; this.deaths = 0; this.respawnAt = 0;
-    this.protectedUntil = now + SPAWN_PROTECTION_SECONDS;
-  }
-}
-
-export type BotShot = { botId: number; origin: CombatVector; direction: CombatVector; damage: number; hit: boolean };
-export type BotAimPose = { aiming: boolean; yaw: number; pitch: number; shotAge: number };
+export type BotShot = { botId: number; origin: CombatVector; direction: CombatVector; damage: number; hit: boolean; weapon: 'sniper' };
+export type BotAimPose = { aiming: boolean; yaw: number; pitch: number; shotAge: number; ammo: number; reloading: boolean; reloadProgress: number; boltProgress: number };
 type AimState = {
   seen: boolean; nextSightAt: number; acquiredAt: number; readyAt: number;
-  lastShotAt: number; aiming: boolean; yaw: number; pitch: number; aim: CombatVector;
+  weapon: Firearm; reloadStartedAt: number; lastShotAt: number; aiming: boolean; yaw: number; pitch: number; aim: CombatVector;
 };
+const SNIPER = WEAPONS[0];
 const RANGE = 35, SIGHT_INTERVAL = .15, MAX_ATTACKERS = 3;
 const distance = (a: CombatVector, b: CombatVector) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 const muzzle = (bot: BotSnapshot): CombatVector => ({ x: bot.x, y: bot.y + 1.34, z: bot.z });
@@ -67,12 +46,14 @@ export class BotCombat {
   reset() { this.states.clear(); this.seed = this.initialSeed >>> 0; }
   pose(id: number, now: number): BotAimPose {
     const s = this.states.get(id);
-    return s ? { aiming: s.aiming, yaw: s.yaw, pitch: s.pitch, shotAge: now - s.lastShotAt }
-      : { aiming: false, yaw: 0, pitch: 0, shotAge: Infinity };
+    const shotAge = s ? now - s.lastShotAt : Infinity;
+    return { aiming: s?.aiming ?? false, yaw: s?.yaw ?? 0, pitch: s?.pitch ?? 0, shotAge,
+      ammo: s?.weapon.ammo ?? SNIPER.magazineSize, reloading: !!s?.weapon.reloadAt,
+      reloadProgress: s?.weapon.reloadAt ? Math.max(0, Math.min(1, (now - s.reloadStartedAt) / SNIPER.reloadSeconds)) : 0,
+      boltProgress: shotAge >= 0 && shotAge < SNIPER.fireSeconds ? shotAge / SNIPER.fireSeconds : 0 };
   }
   update(now: number, dt: number, bots: readonly BotSnapshot[], player: PlayerSnapshot, enabled: boolean,
     canSee: (from: CombatVector, to: CombatVector) => boolean): BotShot[] {
-    if (!enabled || !player.alive) { this.reset(); return []; }
     const living = new Set(bots.filter(b => b.alive).map(b => b.id));
     for (const id of this.states.keys()) if (!living.has(id)) this.states.delete(id);
     const target = torso(player), candidates: { bot: BotSnapshot; state: AimState; distance: number }[] = [];
@@ -81,9 +62,13 @@ export class BotCombat {
       let state = this.states.get(bot.id);
       if (!state) {
         state = { seen: false, nextSightAt: now + (bot.id % 9) * .016, acquiredAt: Infinity,
-          readyAt: Infinity, lastShotAt: -Infinity, aiming: false, yaw: 0, pitch: 0, aim: { ...target } };
+          readyAt: Infinity, weapon: new Firearm(SNIPER), reloadStartedAt: 0, lastShotAt: -Infinity, aiming: false, yaw: 0, pitch: 0, aim: { ...target } };
         this.states.set(bot.id, state);
       }
+      // Bolting and reloading are physical weapon timers, independent of perception.
+      // Losing sight, player protection/death, or a disabled rule cannot refill ammunition.
+      state.weapon.update(now, dt, false, SNIPER.aimSeconds);
+      if (!enabled || !player.alive) { state.seen = false; this.release(state); continue; }
       const from = muzzle(bot), range = distance(from, target);
       if (range > RANGE) { state.seen = false; this.release(state); continue; }
       // Acquisition checks are staggered to spread expensive cover traces across frames.
@@ -102,25 +87,29 @@ export class BotCombat {
       if (!chosen.has(bot.id)) { this.release(state); continue; }
       if (!state.aiming) {
         state.aiming = true; state.acquiredAt = now;
-        state.readyAt = now + .55 + this.random() * .35;
+        state.readyAt = now + 1.10 + this.random() * .65;
         state.aim = { ...target };
       }
       // Smooth tracking leaves room for strafing, jumping, and ducking behind cover.
-      const blend = 1 - Math.exp(-Math.max(0, dt) * 4.5);
+      const blend = 1 - Math.exp(-Math.max(0, dt) * 2.3);
       for (const axis of ['x', 'y', 'z'] as const) state.aim[axis] += (target[axis] - state.aim[axis]) * blend;
       const origin = muzzle(bot), dx = state.aim.x - origin.x, dy = state.aim.y - origin.y, dz = state.aim.z - origin.z;
       state.yaw = Math.atan2(-dx, -dz); state.pitch = Math.atan2(dy, Math.hypot(dx, dz));
-      if (now < state.readyAt) continue;
+      if (now < state.readyAt || now < state.weapon.readyAt || state.weapon.reloadAt) continue;
       // Never trust cached sight at firing time: a newly crossed wall must stop a shot immediately.
       if (!canSee(origin, target)) { state.seen = false; this.release(state); continue; }
-      state.lastShotAt = now; state.readyAt = now + .72 + this.random() * .28;
-      const spread = .021 + range * .00035;
+      if (!state.weapon.fire(now)) continue;
+      state.lastShotAt = now; state.readyAt = now + SNIPER.fireSeconds + .25 + this.random() * .30;
+      if (state.weapon.ammo === 0) {
+        state.weapon.reload(now); state.reloadStartedAt = now;
+      }
+      const spread = .028 + range * .0007;
       const horizontalError = (this.random() * 2 - 1) * spread;
       const verticalError = (this.random() * 2 - 1) * spread;
       const yaw = Math.atan2(dx, dz) + horizontalError;
       const pitch = Math.atan2(dy, Math.hypot(dx, dz)) + verticalError;
       const direction = { x: Math.sin(yaw) * Math.cos(pitch), y: Math.sin(pitch), z: Math.cos(yaw) * Math.cos(pitch) };
-      shots.push({ botId: bot.id, origin, direction, damage: 18, hit: hitsPlayer(origin, direction, player) });
+      shots.push({ botId: bot.id, origin, direction, damage: SNIPER.bodyDamage, weapon: 'sniper', hit: hitsPlayer(origin, direction, player) });
     }
     return shots;
   }

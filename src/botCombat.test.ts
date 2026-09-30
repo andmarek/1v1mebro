@@ -54,11 +54,11 @@ describe('bot combat', () => {
     expect(simulate(new BotCombat(), 3, [bot()], player(40))).toHaveLength(0);
   });
   it('has a reaction delay and limits fire rate without catch-up volleys', () => {
-    const combat = new BotCombat(), shots = simulate(combat, 4);
-    expect(shots.length).toBeGreaterThan(2); expect(shots[0].time).toBeGreaterThanOrEqual(.55);
-    for (let i = 1; i < shots.length; i++) expect(shots[i].time - shots[i - 1].time).toBeGreaterThanOrEqual(.72);
+    const combat = new BotCombat(), shots = simulate(combat, 10);
+    expect(shots.length).toBeGreaterThan(4); expect(shots[0].time).toBeGreaterThanOrEqual(1.10);
+    for (let i = 1; i < shots.length; i++) expect(shots[i].time - shots[i - 1].time).toBeGreaterThanOrEqual(.92);
     expect(combat.update(100, 96, [bot()], player(), true, () => true).length).toBeLessThanOrEqual(1);
-    expect(shots.every(({ shot }) => shot.damage === 18)).toBe(true);
+    expect(shots.every(({ shot }) => shot.damage === 150 && shot.weapon === 'sniper')).toBe(true);
   });
   it('rechecks cover immediately before firing, even between cached sight checks', () => {
     const combat = new BotCombat(); let blockOnSecondCheck = false, checks = 0;
@@ -66,9 +66,9 @@ describe('bot combat', () => {
     combat.update(0, .01, [bot()], player(), true, sight);
     combat.update(.70, .01, [bot()], player(), true, () => true);
     blockOnSecondCheck = true; checks = 0;
-    // At 1s a cached acquisition check passes, but the firing-time check sees fresh cover.
-    expect(combat.update(1, .01, [bot()], player(), true, sight)).toHaveLength(0);
-    expect(checks).toBe(2); expect(combat.pose(0, 1).aiming).toBe(false);
+    // At 1.9s a cached acquisition check passes, but the firing-time check sees fresh cover.
+    expect(combat.update(1.9, .01, [bot()], player(), true, sight)).toHaveLength(0);
+    expect(checks).toBe(2); expect(combat.pose(0, 1.9).aiming).toBe(false);
   });
   it('clears acquisition when disabled, a bot dies, or the player dies', () => {
     const combat = new BotCombat(); simulate(combat, 1);
@@ -88,7 +88,7 @@ describe('bot combat', () => {
     combat.update(1.2, .01, [bot()], player(), true, () => false);
     expect(combat.pose(0, 1.2).aiming).toBe(false);
     expect(simulate(combat, .5, [bot()], player(), () => true, 1.4)).toHaveLength(0);
-    expect(simulate(combat, 1, [bot()], player(), () => true, 1.91).length).toBeGreaterThan(0);
+    expect(simulate(combat, 2, [bot()], player(), () => true, 1.91).length).toBeGreaterThan(0);
   });
   it('limits nine visible bots to three attackers and staggers sight work', () => {
     const combat = new BotCombat(), bots = Array.from({ length: 9 }, (_, id) => ({ ...bot(id), x: id - 4 }));
@@ -109,6 +109,64 @@ describe('bot combat', () => {
     expect(shots).toEqual(simulate(new BotCombat(123), 30, [bot()], player(25)));
     for (const { shot } of shots) expect(Math.hypot(shot.direction.x, shot.direction.y, shot.direction.z)).toBeCloseTo(1);
   });
+  it('fires a five-round magazine then completes a full reload even through lost sight', () => {
+    const combat = new BotCombat();
+    const shots: { shot: BotShot; time: number }[] = [];
+    for (let i = 0; i < 120 * 12 && shots.length < 5; i++) {
+      const time = i / 120;
+      for (const shot of combat.update(time, 1 / 120, [bot()], player(), true, () => true)) shots.push({ shot, time });
+    }
+    expect(shots).toHaveLength(5);
+    const last = shots[4].time;
+    expect(combat.pose(0, last)).toMatchObject({ ammo: 0, reloading: true, reloadProgress: 0 });
+    combat.update(last + .16, .16, [bot()], player(), true, () => false);
+    expect(combat.pose(0, last + .16).aiming).toBe(false);
+    expect(combat.pose(0, last + .16).ammo).toBe(0);
+    // Reacquisition's reaction timer expires first: it must not bypass the physical reload.
+    expect(simulate(combat, 1.9, [bot()], player(), () => true, last + .20)).toHaveLength(0);
+    expect(combat.pose(0, last + 2.10).reloadProgress).toBeCloseTo(2.1 / 2.15);
+    const afterReload = simulate(combat, .6, [bot()], player(), () => true, last + 2.11);
+    expect(afterReload).toHaveLength(1);
+    expect(afterReload[0].time - last).toBeGreaterThanOrEqual(2.15);
+    expect(combat.pose(0, last + 2.71)).toMatchObject({ ammo: 4, reloading: false });
+  });
+  it('retains ammo and bolt timers while the player is dead or enemy fire is disabled', () => {
+    const combat = new BotCombat();
+    const shots = simulate(combat, 1.8);
+    expect(shots).toHaveLength(1);
+    const shotAt = shots[0].time;
+    combat.update(shotAt + .1, .1, [bot()], { ...player(), alive: false }, true, () => true);
+    expect(combat.pose(0, shotAt + .1)).toMatchObject({ aiming: false, ammo: 4, reloading: false });
+    expect(combat.pose(0, shotAt + .1).boltProgress).toBeCloseTo(.1 / .92);
+    combat.update(shotAt + .2, .1, [bot()], player(), false, () => true);
+    expect(combat.pose(0, shotAt + .2).ammo).toBe(4);
+    expect(simulate(combat, 1, [bot()], player(), () => true, shotAt + .3)).toHaveLength(0);
+    expect(combat.pose(0, shotAt + 1.3).ammo).toBe(4);
+  });
+  it('resets enemy weapons on their own death and a new match', () => {
+    const combat = new BotCombat(); simulate(combat, 1.8);
+    expect(combat.pose(0, 1.8).ammo).toBe(4);
+    combat.update(2, .2, [{ ...bot(), alive: false }], player(), true, () => true);
+    combat.update(2.1, .1, [bot()], player(), true, () => true);
+    expect(combat.pose(0, 2.1)).toMatchObject({ ammo: 5, reloading: false });
+    simulate(combat, 2, [bot()], player(), () => true, 2.2);
+    expect(combat.pose(0, 4.2).ammo).toBeLessThan(5);
+    combat.reset(); expect(combat.pose(0, 0)).toMatchObject({ ammo: 5, aiming: false, reloading: false });
+  });
+  it('continues reloading during player death without granting bullets early', () => {
+    const combat = new BotCombat();
+    let fifth = -1, count = 0;
+    for (let i = 0; i < 1440 && count < 5; i++) {
+      const time = i / 120;
+      count += combat.update(time, 1 / 120, [bot()], player(), true, () => true).length;
+      if (count === 5) fifth = time;
+    }
+    expect(fifth).toBeGreaterThan(0);
+    combat.update(fifth + 2, 2, [bot()], { ...player(), alive: false }, true, () => true);
+    expect(combat.pose(0, fifth + 2)).toMatchObject({ ammo: 0, reloading: true });
+    combat.update(fifth + 2.15, .15, [bot()], { ...player(), alive: false }, true, () => true);
+    expect(combat.pose(0, fifth + 2.15)).toMatchObject({ ammo: 5, reloading: false, aiming: false });
+  });
   it('tests the actual player volume, accounting for crouch and missed directions', () => {
     const origin = { x: 0, y: 1.6, z: 0 }, direction = { x: 0, y: 0, z: 1 };
     expect(hitsPlayer(origin, direction, player())).toBe(true);
@@ -119,7 +177,7 @@ describe('bot combat', () => {
 });
 
 
-describe('enemy carbine geometry', () => {
+describe('enemy sniper geometry', () => {
   it('batches at local coordinates and follows the bot without creating extra hitboxes', () => {
     const engine = new NullEngine(), scene = new Scene(engine);
     try {
@@ -129,15 +187,20 @@ describe('enemy carbine geometry', () => {
       const shadows = { addShadowCaster: (mesh: unknown) => { shadowMeshes.push(mesh); } } as unknown as ShadowGenerator;
       const gun = buildBotWeapon(scene, parent, shadows, metal, polymer, botFlashMaterial(scene));
       const meshes = gun.root.getChildMeshes();
-      expect(meshes).toHaveLength(3); expect(shadowMeshes).toHaveLength(2);
+      expect(meshes).toHaveLength(4); expect(shadowMeshes).toHaveLength(3);
       expect(meshes.every(mesh => !mesh.isPickable && mesh.metadata === null)).toBe(true);
-      const barrel = meshes.find(mesh => mesh.name === 'patrol carbine / metal')!;
+      const barrel = meshes.find(mesh => mesh.name === 'patrol sniper / metal')!;
       barrel.computeWorldMatrix(true);
       const first = barrel.getBoundingInfo().boundingBox.centerWorld.clone();
-      expect(first.x).toBeCloseTo(12, 1); expect(first.z).toBeGreaterThan(6); expect(first.z).toBeLessThan(8);
+      expect(first.x).toBeCloseTo(12, 1); expect(first.z).toBeGreaterThan(5.5); expect(first.z).toBeLessThan(8);
       parent.position.x += 8; barrel.computeWorldMatrix(true);
       expect(barrel.getBoundingInfo().boundingBox.centerWorld.x - first.x).toBeCloseTo(8);
       expect(gun.flash.isEnabled()).toBe(false);
+      const bounds = barrel.getBoundingInfo().boundingBox;
+      expect(bounds.maximumWorld.z - bounds.minimumWorld.z).toBeGreaterThan(1.3);
+      gun.updateBolt(.5); expect(gun.bolt.position.z).toBeGreaterThan(.16); expect(gun.bolt.rotation.z).toBeGreaterThan(.8);
+      gun.updateBolt(0); expect(gun.bolt.position.z).toBeCloseTo(.08); expect(gun.bolt.rotation.z).toBe(0);
+      gun.updateBolt(1); expect(gun.bolt.position.z).toBeCloseTo(.08); expect(gun.bolt.rotation.z).toBe(0);
     } finally { scene.dispose(); engine.dispose(); }
   });
 });
