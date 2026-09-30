@@ -20,7 +20,9 @@ import { bulletDamage, resolveCover, traceCover } from './ballistics';
 import { ImpactMarks } from './impacts';
 import { MovementController, MOVEMENT } from './movement';
 import { buildRifle } from './weapon';
-import { BOLT_SECONDS, MAGAZINE_SIZE, RELOAD_SECONDS, Rifle, type Player } from './simulation';
+import { type Player } from './simulation';
+import { buildPistol } from './pistol';
+import { Loadout, type WeaponSlot } from './loadout';
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <canvas id="game" aria-label="First-person quickscope practice arena"></canvas>
@@ -32,14 +34,14 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div id="crosshair"><i></i><i></i><i></i><i></i><b></b></div>
     <div id="hitmarker"></div><div id="feedback"><b></b><span></span></div>
     <div id="notification"></div>
-    <footer class="hud-bottom"><div class="location"><span class="small-label">SECTOR 07</span><b>THE SCRAPYARD</b><span id="input-hint">WASD MOVE &nbsp; / &nbsp; RMB AIM &nbsp; / &nbsp; R RELOAD &nbsp; / &nbsp; ESC PAUSE</span></div><div class="weapon-status"><span class="small-label">BOLT-ACTION / .408</span><b>INTERVENTION <span>01</span></b><div class="ammo"><strong id="ammo">05</strong><span>/ ∞</span><div id="rounds"></div></div><div class="action-status"><span id="action">READY</span><div class="action-track"><i id="action-progress"></i></div></div></div></footer>
+    <footer class="hud-bottom"><div class="location"><span class="small-label">SECTOR 07</span><b>THE SCRAPYARD</b><span id="input-hint">WASD MOVE &nbsp; / &nbsp; RMB AIM &nbsp; / &nbsp; R RELOAD &nbsp; / &nbsp; ESC PAUSE</span></div><div class="weapon-status"><div class="loadout-slots"><span id="slot-rifle" class="selected"><kbd>1</kbd> INTERVENTION</span><span id="slot-pistol"><kbd>2</kbd> FIELD-9</span></div><span class="small-label" id="weapon-label">BOLT-ACTION / .408</span><b id="weapon-name">INTERVENTION <span>01</span></b><div class="ammo"><strong id="ammo">05</strong><span>/ ∞</span><div id="rounds"></div></div><div class="action-status"><span id="action">READY</span><div class="action-track"><i id="action-progress"></i></div></div></div></footer>
     <div id="fps"></div>
   </div>
   <div id="menu">
     <header class="menu-top"><div class="wordmark">DB<span>DEADBOLT / FIELD LAB</span></div><span class="prototype"><i></i> PLAYABLE PROTOTYPE <b>V.01</b></span></header>
-    <main class="menu-content"><section class="intro"><div class="eyebrow"><span>01 / THE SCRAPYARD</span><i></i> SINGLE PLAYER</div><h1>ONE SHOT.<br><em>MAKE IT COUNT.</em></h1><p>A rifle. A dusty yard. The split second<br>between lining it up and landing the shot.</p><div class="tags"><span>INTERVENTION ONLY</span><span>9 PATROLLING ENEMIES</span><span>FREE ROAM</span></div><div class="menu-actions"><button id="play" class="play-button"><span id="play-label">ENTER THE RANGE</span><span>↗</span></button><button id="settings-open" class="menu-settings" aria-label="Open settings">⚙ <span>SETTINGS</span></button></div><div class="start-note" id="start-note">Mouse + keyboard recommended · click to capture mouse</div><p id="error" role="alert"></p></section>
-    <aside class="range-panel"><div class="panel-heading"><span>FIELD NOTES</span><b>QUICKSCOPE / 101</b></div><div class="lesson"><span>01</span><div><b>Line it up.</b><p>Keep the target near your crosshair as you move.</p></div></div><div class="lesson"><span>02</span><div><b>Scope. Fire. Release.</b><p>Hold right click and fire as the scope settles. Hits in the first 180 ms of accuracy earn a quickscope bonus.</p></div></div><div class="lesson"><span>03</span><div><b>Keep moving.</b><p>Sprint with Shift. Jump with Space and steer with A/D. Reposition while the bolt cycles.</p></div></div></aside></main>
-    <footer class="menu-bottom"><div><kbd>W A S D</kbd> MOVE <kbd>SHIFT</kbd> SPRINT <kbd>SPACE</kbd> JUMP <kbd>C</kbd> CROUCH</div><div><kbd>RMB</kbd> AIM <kbd>Q</kbd> TOGGLE AIM <kbd>LMB</kbd> FIRE <kbd>R</kbd> RELOAD <kbd>V</kbd> INSPECT <kbd>ESC</kbd> PAUSE</div><button id="fullscreen" aria-label="Toggle fullscreen">⛶ FULLSCREEN</button></footer>
+    <main class="menu-content"><section class="intro"><div class="eyebrow"><span>01 / THE SCRAPYARD</span><i></i> SINGLE PLAYER</div><h1>ONE SHOT.<br><em>MAKE IT COUNT.</em></h1><p>A rifle. A sidearm. A dusty yard. The split second<br>between lining it up and landing the shot.</p><div class="tags"><span>SNIPER + SIDEARM</span><span>9 PATROLLING ENEMIES</span><span>FREE ROAM</span></div><div class="menu-actions"><button id="play" class="play-button"><span id="play-label">ENTER THE RANGE</span><span>↗</span></button><button id="settings-open" class="menu-settings" aria-label="Open settings">⚙ <span>SETTINGS</span></button></div><div class="start-note" id="start-note">Mouse + keyboard recommended · click to capture mouse</div><p id="error" role="alert"></p></section>
+    <aside class="range-panel"><div class="panel-heading"><span>FIELD NOTES</span><b>QUICKSCOPE / 101</b></div><div class="lesson"><span>01</span><div><b>Line it up.</b><p>Keep the target near your crosshair as you move.</p></div></div><div class="lesson"><span>02</span><div><b>Scope. Fire. Release.</b><p>Hold right click and fire as the scope settles. Hits in the first 180 ms of accuracy earn a quickscope bonus.</p></div></div><div class="lesson"><span>03</span><div><b>Keep moving.</b><p>Sprint with Shift. Jump with Space and steer with A/D. Swap to your sidearm with 1 / 2 or the mouse wheel while the bolt cycles.</p></div></div></aside></main>
+    <footer class="menu-bottom"><div><kbd>W A S D</kbd> MOVE <kbd>SHIFT</kbd> SPRINT <kbd>SPACE</kbd> JUMP <kbd>C</kbd> CROUCH</div><div><kbd>RMB</kbd> AIM <kbd>Q</kbd> TOGGLE AIM <kbd>LMB</kbd> FIRE <kbd>R</kbd> RELOAD <kbd>1 / 2</kbd> SWAP <kbd>V</kbd> INSPECT <kbd>ESC</kbd> PAUSE</div><button id="fullscreen" aria-label="Toggle fullscreen">⛶ FULLSCREEN</button></footer>
   </div>
   ${settingsMarkup}
   <div id="loading"><span>DEADBOLT</span><p>PREPARING THE RANGE…</p></div>
@@ -73,7 +75,8 @@ shadows.filteringQuality = ShadowGenerator.QUALITY_MEDIUM; shadows.bias = 0.0008
 const arena = buildArena(scene, shadows);
 const viewmodel = buildRifle(scene, camera);
 viewmodel.root.setEnabled(false);
-const rifle = new Rifle();
+const pistolModel = buildPistol(scene, camera); pistolModel.root.setEnabled(false);
+const loadout = new Loadout();
 const player: Player = { x: 0, y: 0, z: -23, vy: 0, grounded: true };
 const movement = new MovementController();
 const keys = new Set<string>();
@@ -84,7 +87,7 @@ let yaw = 0, pitch = 0.024, recoil = 0, bob = 0, eyeHeight = 1.65;
 let cameraEyeY = 1.65, landingDip = 0, sprintBlend = 0, motionBlend = 0, stepDistance = 0;
 let sensitivity = 1, adsSeconds = 0.18, movingTargets = true, invertY = false;
 let kills = 0, quicks = 0, hits = 0, points = 0, hitUntil = 0, feedbackUntil = 0;
-let lastShot = -10, boltSoundAt = 0, notificationUntil = 0;
+let boltSoundAt = 0, notificationUntil = 0;
 let inspectStarted = -10;
 let accumulator = 0, lastFrame = performance.now(), lastHud = 0;
 const impacts = new ImpactMarks(scene);
@@ -105,19 +108,18 @@ async function play() {
     fallback = document.pointerLockElement !== canvas;
   } catch { fallback = true; }
   started = true; running = true; clearInput(); menu.hidden = true; hud.hidden = false;
-  viewmodel.root.setEnabled(true); canvas.focus(); lastFrame = performance.now(); accumulator = 0;
+  canvas.focus(); lastFrame = performance.now(); accumulator = 0;
   if (fallback) {
-    $('input-hint').textContent = 'DRAG / ARROWS LOOK / Q AIM / CLICK FIRE / V INSPECT / ESC PAUSE';
+    $('input-hint').textContent = 'DRAG / ARROWS LOOK / Q AIM / CLICK FIRE / 1 · 2 SWAP / ESC PAUSE';
     notify('Mouse capture unavailable: drag to look, Q to toggle aim.');
-  } else $('input-hint').textContent = 'WASD MOVE / RMB AIM / R RELOAD / V INSPECT / ESC PAUSE';
+  } else $('input-hint').textContent = 'WASD MOVE / RMB AIM / R RELOAD / 1 · 2 SWAP / ESC PAUSE';
 }
 function reset() {
   Object.assign(player, { x: 0, y: 0, z: -23, vy: 0, grounded: true });
   yaw = recoil = now = bob = 0; pitch = 0.024;
   movement.reset(); cameraEyeY = eyeHeight = 1.65; landingDip = sprintBlend = motionBlend = stepDistance = 0; kills = quicks = hits = points = 0;
-  Object.assign(rifle, { ammo: MAGAZINE_SIZE, readyAt: 0, reloadAt: 0, shots: 0, ads: 0, accurateSince: -Infinity });
-  lastShot = -10; boltSoundAt = hitUntil = feedbackUntil = notificationUntil = 0;
-  inspectStarted = -10;
+  loadout.reset(); boltSoundAt = hitUntil = feedbackUntil = notificationUntil = 0;
+  inspectStarted = -10; lastWheelAt = -10;
   impacts.clear();
   arena.targets.forEach(t => { t.respawnAt = 0; t.root.setEnabled(true); t.reset(); });
   clearInput(); $('start-note').textContent = 'Practice reset · ready for another run';
@@ -135,12 +137,12 @@ window.addEventListener('blur', () => { if (running) pause(); });
 document.addEventListener('contextmenu', event => { if (event.target === canvas || running) event.preventDefault(); });
 window.addEventListener('keydown', e => {
   if (!running) return;
-  if (['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'KeyC', 'KeyQ'].includes(e.code)) e.preventDefault();
+  if (['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'KeyC', 'KeyQ', 'Digit1', 'Digit2', 'KeyX'].includes(e.code)) e.preventDefault();
   keys.add(e.code);
   // Keyboard look also works in embedded panels that only deliver clicks during a drag.
   if (fallback && e.code.startsWith('Arrow')) {
     e.preventDefault();
-    const lookScale = 1 - rifle.ads * .68;
+    const lookScale = 1 - loadout.weapon.ads * loadout.spec.lookReduction;
     if (e.code === 'ArrowLeft') yaw -= .07 * lookScale;
     if (e.code === 'ArrowRight') yaw += .07 * lookScale;
     if (e.code === 'ArrowUp') pitch = Math.max(-1.45, Math.min(1.45, pitch - .05 * lookScale * (invertY ? -1 : 1)));
@@ -148,11 +150,25 @@ window.addEventListener('keydown', e => {
   }
   if (e.code === 'Space' && !e.repeat) pendingJump = true;
   if (e.code === 'KeyQ' && !e.repeat) aimingToggle = !aimingToggle;
-  if (e.code === 'KeyV' && !e.repeat && !rifle.reloadAt && rifle.ads < 0.05) inspectStarted = now;
-  if (e.code === 'KeyR' && !e.repeat && rifle.reload(now)) { audio.reload(); notify('Reloading'); }
+  if (e.code === 'KeyV' && !e.repeat && !loadout.swapping && !loadout.weapon.reloadAt && loadout.weapon.ads < 0.05) inspectStarted = now;
+  if (!e.repeat && (e.code === 'Digit1' || e.code === 'Digit2')) swap(e.code === 'Digit1' ? 0 : 1);
+  if (e.code === 'KeyX' && !e.repeat) swap(loadout.requested === 0 ? 1 : 0);
+  if (e.code === 'KeyR' && !e.repeat && loadout.reload(now)) { audio.reload(); notify('Reloading'); }
   if (e.code === 'Escape') pause();
 });
 window.addEventListener('keyup', e => keys.delete(e.code));
+let lastWheelAt = -10;
+canvas.addEventListener('wheel', e => {
+  if (!running) return;
+  e.preventDefault();
+  // Trackpad inertia and high-resolution wheels should produce one deliberate swap.
+  if (Math.abs(e.deltaY) < 2 || now - lastWheelAt < .18) return;
+  lastWheelAt = now; swap(loadout.requested === 0 ? 1 : 0);
+}, { passive: false });
+function swap(slot: WeaponSlot) {
+  inspectStarted = -10; pendingFire = false;
+  if (loadout.request(slot, now)) audio.swap();
+}
 canvas.addEventListener('mousedown', e => {
   if (!running) return;
   if (e.button === 0) {
@@ -172,7 +188,7 @@ window.addEventListener('mouseup', e => { if (e.button === 0) dragging = false; 
 window.addEventListener('mousemove', e => {
   if (!running || (document.pointerLockElement !== canvas && !dragging)) return;
   if (dragging) dragDistance += Math.hypot(e.movementX, e.movementY);
-  const scale = 0.0021 * sensitivity * (1 - rifle.ads * 0.68);
+  const scale = 0.0021 * sensitivity * (1 - loadout.weapon.ads * loadout.spec.lookReduction);
   yaw += e.movementX * scale;
   pitch = Math.max(-1.45, Math.min(1.45, pitch + e.movementY * scale * (invertY ? -1 : 1)));
 });
@@ -200,11 +216,15 @@ for (const id of ['settings-open', 'settings-hud']) $(id).addEventListener('clic
 
 function fire() {
   inspectStarted = -10;
-  const shot = rifle.fire(now);
-  if (!shot) { if (!rifle.ammo && !rifle.reloadAt) { audio.dry(); notify('Magazine empty — press R to reload'); } return; }
-  lastShot = now; boltSoundAt = now + 0.35; recoil = 1; audio.shot();
+  const shot = loadout.fire(now);
+  if (!shot) { if (!loadout.swapping && !loadout.weapon.ammo && !loadout.weapon.reloadAt) { audio.dry(); notify('Magazine empty — press R to reload'); } return; }
+  const spec = loadout.spec;
+  recoil = spec.recoil;
+  if (loadout.active === 0) { boltSoundAt = now + .35; audio.shot(); } else audio.pistolShot();
   // Scope accuracy is deliberately independent of the scope's visual animation.
-  const spread = shot.scoped ? (player.grounded ? 0.00035 : 0.005) : 0.045 * (1 - rifle.ads * 0.7);
+  const spread = loadout.active === 0
+    ? shot.scoped ? (player.grounded ? .00035 : .005) : .045 * (1 - loadout.weapon.ads * .7)
+    : shot.scoped ? (player.grounded ? .0012 : .004) : .024 * (1 - loadout.weapon.ads * .8);
   const forward = new Vector3(Math.sin(yaw) * Math.cos(pitch), -Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
   const right = new Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
   const up = Vector3.Cross(forward, right).normalize();
@@ -213,7 +233,7 @@ function fire() {
   const ray = new Ray(camera.position.clone(), direction, 180);
   // Pick only the nearest live enemy. Static cover uses its cached, unmerged geometry.
   const pick = scene.pickWithRay(ray, mesh => mesh.isEnabled() && mesh.metadata?.target !== undefined);
-  const result = resolveCover(traceCover(ray, arena.cover), direction, pick?.hit ? pick.distance : Infinity);
+  const result = resolveCover(traceCover(ray, arena.cover), direction, pick?.hit ? pick.distance : Infinity, spec.energy);
   result.impacts.forEach(impact => impacts.stamp(impact, now));
   const coverLabel = Array.from(new Set(result.materials)).join(' + ').toUpperCase();
   if (result.energy <= 0 || !pick?.hit || !pick.pickedMesh) {
@@ -221,13 +241,13 @@ function fire() {
       feedbackUntil = now + 1.2;
       $('feedback').querySelector('b')!.textContent = result.stopped ? 'COVER HIT' : 'PENETRATED';
       $('feedback').querySelector('span')!.textContent = result.stopped
-        ? `STOPPED BY ${result.stopped.toUpperCase()}` : `${coverLabel} / ${bulletDamage(result.energy, false)} DAMAGE REMAINING`;
+        ? `STOPPED BY ${result.stopped.toUpperCase()}` : `${coverLabel} / ${bulletDamage(result.energy / spec.energy, false, spec.bodyDamage)} DAMAGE REMAINING`;
     }
     return;
   }
   const metadata = pick.pickedMesh.metadata, target = arena.targets[metadata.target];
   if (target.respawnAt) return;
-  const damage = bulletDamage(result.energy, !!metadata.head);
+  const damage = bulletDamage(result.energy / spec.energy, !!metadata.head, spec.bodyDamage);
   target.health = Math.max(0, target.health - damage);
   const eliminated = target.health === 0, throughCover = result.penetrations > 0;
   hits++; hitUntil = now + .19; feedbackUntil = now + 1.4;
@@ -251,8 +271,10 @@ function fixedUpdate(dt: number) {
   now += dt;
   const crouching = keys.has('KeyC') || keys.has('ControlLeft') || keys.has('ControlRight');
   const aiming = aimingMouse || aimingToggle;
-  if (aiming || rifle.reloadAt) inspectStarted = -10;
-  rifle.update(now, dt, aiming, adsSeconds);
+  if (aiming || loadout.weapon.reloadAt) inspectStarted = -10;
+  const previousSlot = loadout.active;
+  loadout.update(now, dt, aiming, adsSeconds);
+  if (previousSlot !== loadout.active) recoil = 0;
   if (pendingJump) movement.queueJump();
   pendingJump = false;
   const motion = movement.update(player, {
@@ -278,7 +300,7 @@ function fixedUpdate(dt: number) {
     if (stepDistance >= (motion.sprinting ? 2.05 : crouching ? 1.5 : 1.65)) { audio.step(); stepDistance = 0; }
   }
   recoil = Math.max(0, recoil - dt * 5.5);
-  if (boltSoundAt && now >= boltSoundAt) { audio.bolt(); boltSoundAt = 0; }
+  if (boltSoundAt && now >= boltSoundAt) { if (loadout.active === 0) audio.bolt(); boltSoundAt = 0; }
   for (const target of arena.targets) {
     if (target.respawnAt && now >= target.respawnAt) { target.reset(); target.root.setEnabled(true); target.respawnAt = 0; }
     if (target.respawnAt) continue;
@@ -287,9 +309,9 @@ function fixedUpdate(dt: number) {
     updatePatrol(target.patrol, dt, movingTargets, blockers);
     target.animate(dt, now);
   }
-  camera.position.set(player.x, cameraEyeY - landingDip * (1 - rifle.ads * .85) + (player.grounded ? Math.sin(bob) * .025 * motionBlend * (1 - rifle.ads) : 0), player.z);
+  camera.position.set(player.x, cameraEyeY - landingDip * (1 - loadout.weapon.ads * .85) + (player.grounded ? Math.sin(bob) * .025 * motionBlend * (1 - loadout.weapon.ads) : 0), player.z);
   camera.rotation.set(pitch - recoil * 0.065, yaw, 0);
-  camera.fov = 0.98 + (0.235 - 0.98) * smooth(rifle.ads) + .045 * sprintBlend * (1 - smooth(rifle.ads));
+  camera.fov = 0.98 + (loadout.spec.aimFov - 0.98) * smooth(loadout.weapon.ads) + .045 * sprintBlend * (1 - smooth(loadout.weapon.ads));
   if (pendingFire) { pendingFire = false; fire(); }
   impacts.update(now);
 }
@@ -297,17 +319,24 @@ const smooth = (v: number) => v * v * (3 - 2 * v);
 function updateHud() {
   $('kills').textContent = String(kills).padStart(2, '0');
   $('quicks').textContent = String(quicks).padStart(2, '0');
-  $('accuracy').textContent = rifle.shots ? `${Math.round(hits / rifle.shots * 100)}%` : '—';
-  $('ammo').textContent = String(rifle.ammo).padStart(2, '0');
-  $('rounds').innerHTML = Array.from({ length: MAGAZINE_SIZE }, (_, i) => `<i class="${i < rifle.ammo ? 'loaded' : ''}"></i>`).join('');
+  $('accuracy').textContent = loadout.shots ? `${Math.round(hits / loadout.shots * 100)}%` : '—';
+  $('weapon-label').textContent = loadout.spec.label;
+  $('weapon-name').innerHTML = `${loadout.spec.name} <span>0${loadout.active + 1}</span>`;
+  $('slot-rifle').classList.toggle('selected', loadout.active === 0);
+  $('slot-pistol').classList.toggle('selected', loadout.active === 1);
+  $('slot-rifle').classList.toggle('incoming', loadout.swapping && loadout.requested === 0);
+  $('slot-pistol').classList.toggle('incoming', loadout.swapping && loadout.requested === 1);
+  $('ammo').textContent = String(loadout.weapon.ammo).padStart(2, '0');
+  $('rounds').innerHTML = Array.from({ length: loadout.spec.magazineSize }, (_, i) => `<i class="${i < loadout.weapon.ammo ? 'loaded' : ''}"></i>`).join('');
   $('timer').textContent = `${String(Math.floor(now / 60)).padStart(2, '0')}:${String(Math.floor(now % 60)).padStart(2, '0')}`;
   let progress = 1, status = 'READY';
-  if (rifle.reloadAt) { status = 'RELOADING'; progress = 1 - (rifle.reloadAt - now) / RELOAD_SECONDS; }
-  else if (rifle.readyAt > now) { status = 'CYCLING BOLT'; progress = 1 - (rifle.readyAt - now) / BOLT_SECONDS; }
-  else if (!rifle.ammo) { status = 'R / RELOAD'; progress = 0; }
-  else if (rifle.ads >= 0.72) status = now - rifle.accurateSince <= 0.18 ? 'QUICKSCOPE WINDOW' : 'SCOPE READY';
+  if (loadout.swapping) { status = 'SWAPPING'; progress = loadout.swapProgress(now); }
+  else if (loadout.weapon.reloadAt) { status = 'RELOADING'; progress = 1 - (loadout.weapon.reloadAt - now) / loadout.spec.reloadSeconds; }
+  else if (loadout.weapon.readyAt > now) { status = loadout.active === 0 ? 'CYCLING BOLT' : 'RECOVERING'; progress = 1 - (loadout.weapon.readyAt - now) / loadout.spec.fireSeconds; }
+  else if (!loadout.weapon.ammo) { status = 'R / RELOAD'; progress = 0; }
+  else if (loadout.weapon.ads >= .72) status = loadout.active === 1 ? 'SIGHTS READY' : now - loadout.weapon.accurateSince <= .18 ? 'QUICKSCOPE WINDOW' : 'SCOPE READY';
   $('action').textContent = status; $('action-progress').style.width = `${Math.max(0, progress) * 100}%`;
-  $('action').classList.toggle('ready', rifle.ads >= 0.72 && !rifle.reloadAt);
+  $('action').classList.toggle('ready', loadout.weapon.ads >= .72 && !loadout.weapon.reloadAt && !loadout.swapping);
   $('fps').textContent = `${Math.round(engine.getFps())} FPS`;
 }
 engine.runRenderLoop(() => {
@@ -315,17 +344,23 @@ engine.runRenderLoop(() => {
   if (running) {
     accumulator += dt;
     while (accumulator >= 1 / 120) { fixedUpdate(1 / 120); accumulator -= 1 / 120; }
-    const ads = smooth(rifle.ads), shotAge = now - lastShot;
-    const sway = Math.sin(bob) * .012 * motionBlend * (1 - ads) * Number(player.grounded) + Math.sin(now * 1.5) * .0015 * (1 - motionBlend);
-    const reloadT = rifle.reloadAt ? 1 - (rifle.reloadAt - now) / RELOAD_SECONDS : 0;
+    const ads = smooth(loadout.weapon.ads), shotAge = now - loadout.lastShots[loadout.active];
+    const sway = Math.sin(bob) * .012 * motionBlend * (1 - ads) * Number(player.grounded) + Math.sin(now * 1.5) * .0015 * (1 - motionBlend) * (1 - ads * .9);
+    const reloadT = loadout.weapon.reloadAt ? 1 - (loadout.weapon.reloadAt - now) / loadout.spec.reloadSeconds : 0;
     const inspectT = (now - inspectStarted) / 2.4;
     const inspect = inspectT >= 0 && inspectT < 1 ? Math.sin(inspectT * Math.PI) : 0;
-    viewmodel.updatePose(ads, recoil, sway, shotAge, reloadT, !!rifle.reloadAt, inspect);
-    viewmodel.root.setEnabled(rifle.ads < 0.75);
-    viewmodel.flash.setEnabled(shotAge < 0.045);
-    $('scope').style.opacity = String(Math.max(0, Math.min(1, (rifle.ads - 0.55) / 0.2)));
-    $('scope').classList.toggle('accurate', rifle.ads >= 0.72);
-    $('crosshair').style.opacity = String(1 - Math.min(1, rifle.ads * 2));
+    viewmodel.root.setEnabled(loadout.active === 0 && loadout.weapon.ads < .75);
+    pistolModel.root.setEnabled(loadout.active === 1);
+    const model = loadout.active === 0 ? viewmodel : pistolModel;
+    if (loadout.active === 0) viewmodel.updatePose(ads, recoil, sway, shotAge, reloadT, !!loadout.weapon.reloadAt, inspect);
+    else pistolModel.updatePose(ads, recoil, sway, shotAge, reloadT, !!loadout.weapon.reloadAt, inspect, loadout.weapon.ammo === 0);
+    const holster = smooth(loadout.holsterAmount(now));
+    model.root.position.y -= holster * .38;
+    model.root.rotation.x += holster * .35;
+    model.flash.setEnabled(!loadout.swapping && shotAge < (loadout.active === 0 ? .045 : .035));
+    $('scope').style.opacity = loadout.active === 0 ? String(Math.max(0, Math.min(1, (loadout.weapon.ads - .55) / .2))) : '0';
+    $('scope').classList.toggle('accurate', loadout.active === 0 && loadout.weapon.ads >= .72);
+    $('crosshair').style.opacity = String(1 - Math.min(1, loadout.weapon.ads * 2));
     $('crosshair').style.setProperty('--spread', `${10 + (!player.grounded ? 13 : 0) + recoil * 12}px`);
     $('hitmarker').style.opacity = now < hitUntil ? '1' : '0';
     $('feedback').style.opacity = now < feedbackUntil ? '1' : '0';
@@ -336,7 +371,7 @@ engine.runRenderLoop(() => {
     camera.position.set(24 + Math.sin(t * 0.035) * 2, 15, -27);
     camera.setTarget(new Vector3(0, 3.5, 3));
   }
-  if (!running) { $('scope').style.opacity = '0'; viewmodel.root.setEnabled(false); }
+  if (!running) { $('scope').style.opacity = '0'; viewmodel.root.setEnabled(false); pistolModel.root.setEnabled(false); }
   scene.render();
 });
 window.addEventListener('resize', () => engine.resize());

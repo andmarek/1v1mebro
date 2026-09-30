@@ -64,8 +64,8 @@ export function traceCover(ray: Ray, surfaces: CoverSurface[]): CoverCrossing[] 
 }
 
 /** A finite energy budget; decorative corrugations and an empty container's air are not extra walls. */
-export function resolveCover(crossings: CoverCrossing[], direction: Vector3, targetDistance = Infinity) {
-  let energy = 1, penetrations = 0;
+export function resolveCover(crossings: CoverCrossing[], direction: Vector3, targetDistance = Infinity, initialEnergy = 1) {
+  let energy = initialEnergy, penetrations = 0;
   const impacts: CoverImpact[] = [], materials: CoverMaterial[] = [];
   let stopped: CoverMaterial | null = null;
   for (const crossing of crossings) {
@@ -87,7 +87,7 @@ export function resolveCover(crossings: CoverCrossing[], direction: Vector3, tar
   return { energy, penetrations, impacts, materials, stopped };
 }
 
-export function bulletDamage(energy: number, head: boolean) { return Math.round(BODY_DAMAGE * (head ? 2 : 1) * energy); }
+export function bulletDamage(energy: number, head: boolean, baseDamage = BODY_DAMAGE) { return Math.round(baseDamage * (head ? 2 : 1) * energy); }
 
 /** Project onto real triangles, clipping around corners instead of floating a square above the surface. */
 export function projectImpact(hit: SurfaceHit, size: number, angle: number) {

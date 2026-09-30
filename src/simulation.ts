@@ -43,15 +43,17 @@ export function movePlayer(p: Player, dx: number, dz: number, dt: number, solids
 export const MAGAZINE_SIZE = 5;
 export const BOLT_SECONDS = 0.92;
 export const RELOAD_SECONDS = 2.15;
-export class Rifle {
-  ammo = MAGAZINE_SIZE;
+export type WeaponTuning = { magazineSize: number; fireSeconds: number; reloadSeconds: number; quickscope: boolean };
+export class Firearm {
+  constructor(readonly tuning: WeaponTuning = { magazineSize: MAGAZINE_SIZE, fireSeconds: BOLT_SECONDS, reloadSeconds: RELOAD_SECONDS, quickscope: true }) { this.ammo = tuning.magazineSize; }
+  ammo: number;
   readyAt = 0;
   reloadAt = 0;
   shots = 0;
   ads = 0;
   accurateSince = -Infinity;
   update(now: number, dt: number, aiming: boolean, adsSeconds: number) {
-    if (this.reloadAt && now >= this.reloadAt) { this.ammo = MAGAZINE_SIZE; this.reloadAt = 0; }
+    if (this.reloadAt && now >= this.reloadAt) { this.ammo = this.tuning.magazineSize; this.reloadAt = 0; }
     const previous = this.ads;
     this.ads = Math.max(0, Math.min(1, this.ads + (aiming && !this.reloadAt ? 1 : -1) * dt / adsSeconds));
     if (previous < 0.72 && this.ads >= 0.72) this.accurateSince = now;
@@ -59,12 +61,15 @@ export class Rifle {
   }
   fire(now: number) {
     if (this.reloadAt || now < this.readyAt || this.ammo === 0) return null;
-    this.ammo--; this.shots++; this.readyAt = now + BOLT_SECONDS;
-    return { quickscope: this.ads >= 0.72 && now - this.accurateSince <= 0.18, scoped: this.ads >= 0.72 };
+    this.ammo--; this.shots++; this.readyAt = now + this.tuning.fireSeconds;
+    return { quickscope: this.tuning.quickscope && this.ads >= 0.72 && now - this.accurateSince <= 0.18, scoped: this.ads >= 0.72 };
   }
   reload(now: number) {
-    if (this.reloadAt || this.ammo === MAGAZINE_SIZE) return false;
-    this.reloadAt = now + RELOAD_SECONDS;
+    if (this.reloadAt || this.ammo === this.tuning.magazineSize) return false;
+    this.reloadAt = now + this.tuning.reloadSeconds;
     return true;
   }
 }
+
+/** Default Intervention rules retained for the original rifle API. */
+export class Rifle extends Firearm {}

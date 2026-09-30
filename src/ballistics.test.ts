@@ -38,6 +38,16 @@ describe('cover penetration and damage', () => {
     // Enemy health persists between hits; a second equivalent hit eliminates it.
     expect(Math.max(0, 100 - bulletDamage(result.energy, false) * 2)).toBe(0);
   });
+  it('gives the pistol lighter direct damage and a smaller penetration budget', () => {
+    const r = ray(), energy = .35;
+    const direct = resolveCover([], r.direction, 10, energy);
+    expect(bulletDamage(direct.energy / energy, false, 35)).toBe(35);
+    expect(bulletDamage(direct.energy / energy, true, 35)).toBe(70);
+    const stopped = resolveCover(traceCover(r, [panel('metal', .035)]), r.direction, 10, energy);
+    expect(stopped.energy).toBe(0); expect(stopped.impacts.map(i => i.exit)).toEqual([false]);
+    const thin = resolveCover(traceCover(r, [panel('wood', .02)]), r.direction, 10, energy);
+    expect(thin.penetrations).toBe(1); expect(bulletDamage(thin.energy / energy, false, 35)).toBe(12);
+  });
   it('distinguishes timber, concrete, and thick structural steel', () => {
     expect(bulletDamage(shot([panel('wood', .12)]).energy, false)).toBe(89);
     for (const [material, depth] of [['concrete', .5], ['metal', .3]] as const) {

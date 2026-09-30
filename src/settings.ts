@@ -22,7 +22,7 @@ export const settingsMarkup = `
           <div class="settings-section-heading"><span>01 / INPUT</span><h3>Find your feel.</h3><p>Fine-tune how you look around the range.</p></div>
           <div class="setting-row setting-range"><div><label for="sensitivity">Mouse sensitivity</label><p>Adjust how far the camera turns as you move the mouse.</p></div><div class="setting-input"><output id="sensitivity-value" for="sensitivity">1.0</output><input id="sensitivity" type="range" min="0.3" max="2.5" step="0.1" value="1"></div></div>
           <div class="setting-row"><div><label for="invert-y">Invert vertical look</label><p>Move the mouse up to look down.</p></div><input id="invert-y" class="setting-switch" type="checkbox" role="switch"></div>
-          <div class="settings-controls"><span>FIELD CONTROLS</span><div><b><kbd>W A S D</kbd> Move</b><b><kbd>SHIFT</kbd> Sprint</b><b><kbd>SPACE</kbd> Jump</b><b><kbd>C</kbd> Lower stance</b><b><kbd>RMB / Q</kbd> Aim</b><b><kbd>LMB</kbd> Fire</b><b><kbd>R</kbd> Reload</b><b><kbd>V</kbd> Inspect</b></div><p>In embedded previews, use arrow keys or drag to look.</p></div>
+          <div class="settings-controls"><span>FIELD CONTROLS</span><div><b><kbd>W A S D</kbd> Move</b><b><kbd>SHIFT</kbd> Sprint</b><b><kbd>SPACE</kbd> Jump</b><b><kbd>C</kbd> Lower stance</b><b><kbd>RMB / Q</kbd> Aim</b><b><kbd>LMB</kbd> Fire</b><b><kbd>R</kbd> Reload</b><b><kbd>V</kbd> Inspect</b><b><kbd>1 / 2</kbd> Select weapon</b><b><kbd>WHEEL / X</kbd> Swap weapon</b></div><p>In embedded previews, use arrow keys or drag to look.</p></div>
         </section>
         <section id="panel-graphics" role="tabpanel" aria-labelledby="tab-graphics" tabindex="0" hidden>
           <div class="settings-section-heading"><span>02 / VISUALS</span><h3>Make every shot clear.</h3><p>Balance surface detail with a smooth frame rate.</p></div>
@@ -39,7 +39,7 @@ export const settingsMarkup = `
           <div class="settings-section-heading"><span>04 / TRAINING</span><h3>Practice your way.</h3><p>Set up the range for tracking or precision.</p></div>
           <div class="setting-row"><div><label for="moving">Walking enemies</label><p>Enemies patrol the yard and tower decks. Turn off for stationary practice.</p></div><input id="moving" class="setting-switch" type="checkbox" role="switch" checked></div>
           <div class="setting-row setting-range"><div><label for="ads-speed">Scope-in time</label><p>Choose how quickly the rifle settles into its scope.</p></div><div class="setting-input"><output id="ads-value" for="ads-speed">180 ms</output><input id="ads-speed" type="range" min="120" max="320" step="10" value="180"></div></div>
-          <div class="setting-row setting-reset"><div><b>Fresh session</b><p>Clear your score, refill the rifle, and restore enemies to full health at spawn.</p></div><button id="reset" class="settings-secondary">RESET PRACTICE ↺</button></div>
+          <div class="setting-row setting-reset"><div><b>Fresh session</b><p>Clear your score, refill both weapons, and restore enemies to full health at spawn.</p></div><button id="reset" class="settings-secondary">RESET PRACTICE ↺</button></div>
         </section>
       </main>
     </div>
