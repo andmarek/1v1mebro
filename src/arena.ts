@@ -17,9 +17,10 @@ import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGener
 import type { Solid } from './simulation';
 import { towerGeometry } from './tower';
 import { captureGeometry, TARGET_HEALTH, type CoverSurface, type CoverMaterial } from './ballistics';
+import { buildBotWeapon, botFlashMaterial } from './botWeapon';
 import { createPatrol, PATROL_ROUTES, PatrolNavigation, resetPatrol, walkingPose, type Patrol } from './patrol';
 
-export type Target = { root: TransformNode; home: Vector3; meshes: Mesh[]; index: number; health: number; respawnAt: number; patrol: Patrol; animate: (dt: number, now: number) => void; reset: () => void };
+export type Target = { root: TransformNode; home: Vector3; meshes: Mesh[]; index: number; health: number; respawnAt: number; patrol: Patrol; animate: (dt: number, now: number) => void; reset: () => void; setCombatPose: (aiming: boolean, yaw: number, pitch: number, shotAge: number) => void };
 export function buildArena(scene: Scene, shadows: ShadowGenerator) {
   const solids: Solid[] = [];
   const targets: Target[] = [];
@@ -321,10 +322,12 @@ export function buildArena(scene: Scene, shadows: ShadowGenerator) {
   const floors = [0, 0, 0, 0, 0, 4.25, 8.35, 0, 0];
   const navigation = new Map<number, PatrolNavigation>();
   for (const floor of new Set(floors)) navigation.set(floor, new PatrolNavigation(solids, floor));
+  const enemyFlash = botFlashMaterial(scene);
   PATROL_ROUTES.forEach((route, index) => {
     const home = new Vector3(route[0].x, floors[index], route[0].z);
     const root = new TransformNode(`enemy-${index}`, scene); root.position.copyFrom(home);
     const body = new TransformNode('walking body', scene); body.parent = root;
+    const upperBody = new TransformNode('aiming torso', scene); upperBody.parent = body;
     const meshes: Mesh[] = [];
     const attach = (mesh: Mesh, parent: TransformNode, mat: Material, head = false) => {
       mesh.parent = parent; finish(mesh, mat); mesh.metadata = { target: index, head }; meshes.push(mesh); return mesh;
@@ -351,37 +354,54 @@ export function buildArena(scene: Scene, shadows: ShadowGenerator) {
     });
     part('waist belt', 0, .87, 0, .4, .13, .23, steel);
     const torso = MeshBuilder.CreateLathe('formed enemy torso', { shape: [new Vector3(0, 0, 0), new Vector3(.19, 0, 0), new Vector3(.22, .18, 0), new Vector3(.28, .43, 0), new Vector3(.3, .55, 0), new Vector3(.25, .63, 0), new Vector3(.15, .7, 0), new Vector3(0, .7, 0)], tessellation: 32 }, scene);
-    torso.position.y = .83; torso.scaling.z = .5; attach(torso, body, targetPlate);
+    torso.position.y = .83; torso.scaling.z = .5; attach(torso, upperBody, targetPlate);
     const arms = [-1, 1].map(side => {
-      const shoulder = pivot('shoulder joint', side * .32, 1.43); shoulder.rotation.z = side * .12;
+      const shoulder = pivot('shoulder joint', side * .32, 1.43, upperBody); shoulder.rotation.z = side * .12;
       capsule('upper arm', .30, .15, -.15, shoulder, targetPlate);
       const elbow = pivot('elbow joint', 0, -.29, shoulder); elbow.rotation.x = -.2;
       capsule('forearm', .28, .13, -.14, elbow, steel);
       capsule('gloved hand', .15, .13, -.31, elbow, black);
       return { shoulder, elbow };
     });
-    part('enemy neck', 0, 1.58, 0, .1, .13, .1, steel);
-    const neck = pivot('head turn', 0, 1.8);
+    part('enemy neck', 0, 1.58, 0, .1, .13, .1, steel, upperBody);
+    const neck = pivot('head turn', 0, 1.8, upperBody);
     const head = MeshBuilder.CreateSphere('head target', { diameter: .32, segments: 24 }, scene);
     head.scaling.z = .75; attach(head, neck, targetHead, true);
-    part('front chest marker', 0, 1.22, -.14, .13, .17, .025, orange);
-    part('back chest marker', 0, 1.22, .14, .13, .17, .025, orange);
+    part('front chest marker', 0, 1.22, -.14, .13, .17, .025, orange, upperBody);
+    part('back chest marker', 0, 1.22, .14, .13, .17, .025, orange, upperBody);
     const patrol = createPatrol(route, navigation.get(home.y)!, index);
+    const gun = buildBotWeapon(scene, upperBody, shadows, steel, black, enemyFlash);
+    const setCombatPose = (aiming: boolean, yaw: number, pitch: number, shotAge: number) => {
+      const relativeYaw = yaw - patrol.heading;
+      upperBody.rotation.y = aiming ? Math.atan2(Math.sin(relativeYaw), Math.cos(relativeYaw)) : 0;
+      gun.root.position.set(aiming ? .10 : .22, aiming ? 1.16 : .94, aiming ? -.37 : -.10);
+      gun.root.rotation.set(aiming ? pitch : -.75, 0, aiming ? 0 : -.15);
+      gun.flash.setEnabled(aiming && shotAge >= 0 && shotAge < .05);
+      if (aiming) {
+        // Legs keep their patrol gait while the torso and hands shoulder the weapon.
+        arms[0].shoulder.rotation.set(1.15 + pitch * .6, 0, -.40);
+        arms[1].shoulder.rotation.set(1.10 + pitch * .6, 0, -.40);
+        arms[0].elbow.rotation.x = .10; arms[1].elbow.rotation.x = -.85;
+        neck.rotation.y = 0;
+      }
+    };
     let blend = 0;
     const pose = (now: number) => {
       const gait = walkingPose(patrol.travel, blend);
       root.position.set(patrol.x, home.y, patrol.z); root.rotation.y = patrol.heading;
-      body.position.y = gait.bob + .008; body.rotation.x = gait.lean;
+      body.position.y = gait.bob + .008; body.rotation.x = gait.lean; upperBody.rotation.y = 0;
       const angles = [gait.leftLeg, gait.rightLeg], knees = [gait.leftKnee, gait.rightKnee];
       legs.forEach((leg, i) => {
         leg.hip.rotation.x = angles[i]; leg.knee.rotation.x = knees[i];
         leg.ankle.rotation.x = -angles[i] - knees[i] - gait.lean;
       });
-      arms[0].shoulder.rotation.x = gait.leftArm; arms[1].shoulder.rotation.x = gait.rightArm;
+      arms[0].shoulder.rotation.set(gait.leftArm, 0, -.12); arms[1].shoulder.rotation.set(gait.rightArm, 0, .12);
+      arms.forEach(arm => { arm.elbow.rotation.x = -.2; });
+      setCombatPose(false, 0, 0, Infinity);
       neck.rotation.y = Math.sin(now * .7 + index * 1.8) * .12 * (1 - blend);
     };
-    const reset = () => { const target = targets[index]; if (target) target.health = TARGET_HEALTH; resetPatrol(patrol); blend = 0; pose(0); };
-    targets.push({ root, home, meshes, index, health: TARGET_HEALTH, respawnAt: 0, patrol, reset,
+    const reset = () => { const target = targets[index]; if (target) target.health = TARGET_HEALTH; resetPatrol(patrol); blend = 0; pose(0); setCombatPose(false, 0, 0, Infinity); };
+    targets.push({ root, home, meshes, index, health: TARGET_HEALTH, respawnAt: 0, patrol, reset, setCombatPose,
       animate: (dt, now) => { blend += ((patrol.walking ? 1 : 0) - blend) * Math.min(1, dt * 10); pose(now); } });
     reset();
   });

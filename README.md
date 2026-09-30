@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173** in a desktop browser and click **Enter the range**. Chrome or Edge in a regular browser window is recommended for mouse capture. If an embedded preview blocks Pointer Lock, the game falls back to dragging or using arrow keys to look and clicking to shoot. Right click aims in either mode; enable **Toggle aim** in Controls to aim with a click rather than a hold.
+Open **http://127.0.0.1:5173** in a desktop browser and click **Create match**, choose rules, then **Start match**. Chrome or Edge in a regular browser window is recommended for mouse capture. If an embedded preview blocks Pointer Lock, the game falls back to dragging or using arrow keys to look and clicking to shoot. Right click aims in either mode; enable **Toggle aim** in Controls to aim with a click rather than a hold.
 
 ```sh
 npm test       # movement feel, collision, weapon timing/swaps, patrol, and penetration tests
@@ -33,11 +33,22 @@ npm run preview
 | 1 / 2 | Select sniper / FIELD-9 pistol |
 | Mouse wheel | Swap weapons |
 | V | Inspect the equipped weapon |
+| E / Mouse4 | Knife attack when allowed by match rules |
 | Esc | Pause / release mouse |
 
 Open **Settings** from the range menu or the HUD gear. Controls, Graphics, Audio, and Practice tabs include sensitivity, inverted vertical look, toggle aim, render resolution, shadow detail, impact marks, an FPS counter, volume, walking enemies, scope-in time, and a practice reset. Preferences save locally when storage is available; **Restore defaults** resets them. Opening settings pauses the game.
 
 Bullet holes use three shared procedural textures for metal, wood, and concrete, projected onto the actual surface triangles. Entry marks appear on all struck cover; exit marks appear only when a bullet passes through. A pool capped at 64 reuses old marks, and marks clear after 30 seconds of game time. The graphics toggle hides existing holes and suppresses new ones without changing damage or penetration.
+
+## Match setup
+
+**Create match** opens a separate rules dialog. **Quickscope practice** defaults to pistol damage and knives enabled, with enemy fire off. **Combat range** enables all three. Pistol damage can be disabled while retaining shots, sights, and weapon swaps. **New match** on the pause menu opens the dialog again; starting resets the session, while canceling preserves it. Personal Controls/Graphics/Audio preferences remain separate and persist locally.
+
+Enabled bots acquire targets within 35 m, react after 550–900 ms, and fire every 720–1000 ms. At most three attack at once. They track with a delay and imperfect aim so movement can dodge shots; actual cover blocks both sight and bullets. Hits deal 18 damage. Gun poses, muzzle flashes, brief pooled tracers, impact marks, sounds, and a red damage overlay show incoming fire.
+
+You have 100 health, which stays damaged until respawn or reset. Death disables player actions and shows a two-second respawn countdown; enemy patrols continue. Respawning restores both magazines and health at the initial spawn, while keeping match statistics. Three seconds of spawn protection ends early when you fire an enabled damaging weapon or knife.
+
+Knives deal 100 damage with a short wind-up, one contact event, and a 620 ms cooldown. A front-facing target must be within 2 m of its body surface and unobstructed by actual map cover. Melee lowers your firearm, cancels unfinished reloads without granting ammunition, and blocks firing, swaps, aiming, inspection, and sprinting until recovery. Knife eliminations score normally but do not count as firearm accuracy hits.
 
 ## Mechanics
 
@@ -56,7 +67,7 @@ Bullet holes use three shared procedural textures for metal, wood, and concrete,
 - Jumps reach about 1.4 m and retain takeoff momentum, with gravity adapted to the arena's meter scale. WASD steers more gently in the air, with bounded speed so repeated hops cannot stack extra acceleration. Jump presses are buffered for 120 ms before landing; a 100 ms grace window permits jumping just after leaving an edge. Holding jump does not automatically repeat it.
 - The collision controller slides along cover, steps up stairs, and follows small downward steps without bouncing off each tread. Crouching reduces the collision hull from 1.75 m to 1.25 m and moves at a base 2.8 m/s before weapon/directional scales. Releasing crouch under low cover keeps the player crouched until there is room to stand; the camera follows the actual stance.
 - Weapon presentation includes bounded mouse-turn sway, stance/speed-sensitive bob, a lowered sprint pose, and a 150 ms landing deflection followed by a 300 ms recovery. Gun and camera recoil recover on separate springs, and shots follow the visible crosshair during recoil. Aiming strongly attenuates motion; stair treads do not trigger landing shake. Presentation runs independently of fixed physics. Camera height smooths stair transitions, sprint subtly widens FOV, and footsteps follow actual travel.
-- All nine practice enemies walk along patrol loops, with turns, brief pauses, swinging arms, bending knees, and level boots. Paths avoid map cover; elevated patrols stay on their decks. Enemies stop for nearby characters. Disable **Walking enemies** for stationary practice, or reset the session to return everyone to their spawn. They do not shoot back yet.
+- All nine practice enemies walk along patrol loops, with turns, brief pauses, swinging arms, bending knees, and level boots. Paths avoid map cover; elevated patrols stay on their decks. Enemies stop for nearby characters. Disable **Walking enemies** for stationary practice, or reset the session to return everyone to their spawn. Enable **Enemies shoot back** in match setup for combat practice.
 - The rifle has rounded machined edges, an open handguard, fluted barrel, hollow scope housing, coated lenses, adjustment dials, screws, engraved markings, and tactical gloves. Metal, paint, fabric, and rubber use distinct physically based materials. The bolt, hands, and magazine animate independently.
 - The scrapyard uses photographed sand, concrete, and rust materials, chipped painted metal, beveled containers with locking hardware, cast Jersey barriers, open steel stairs, hollow pipes, rolled drums, chain-link fences, gravel, tire tracks, and an eroded desert ridge. Physically based lighting, 2K filtered shadows, dust haze, and filmic tone mapping give surfaces more depth. Static detail is batched by material to keep draw calls low. Playable terrain and stair collision retain the original layout.
 - Audio is synthesized locally with Web Audio. Map and weapon geometry are authored in code. Public-domain Poly Haven material maps and a Babylon.js reflection environment are bundled locally; credits are in `public/assets/README.md`. Google Fonts are optional and fall back to local fonts.
@@ -67,7 +78,11 @@ Movement and camera/weapon behavior reference [IW4L](https://github.com/vladtrc/
 
 ## Code
 
-- `src/main.ts`: input, fixed-step game loop, hitscan, HUD, pause.
+- `src/main.ts`: input, fixed-step game loop, combat integration, HUD, pause.
+- `src/match.ts` / `src/matchSetup.ts`: shared combat contracts, damage rules, and match setup dialog.
+- `src/melee.ts` / `src/knife.ts`: cover-aware melee targeting and animated knife model.
+- `src/botCombat.ts` / `src/botWeapon.ts`: deterministic attacks, player life cycle, and visible bot weapons.
+- `src/combatEffects.ts`: bounded incoming-fire tracers.
 - `src/ballistics.ts`: cached static surface geometry, material/thickness penetration, damage, and clipped decal projection.
 - `src/ballistics.test.ts`: direct shots, material resistance, layered/angled cover, hollow shells, and surface projection checks.
 - `src/impacts.ts`: procedural hole textures and a bounded, reusable decal pool.
