@@ -75,9 +75,17 @@ export function buildKnife(scene: Scene, camera: FreeCamera) {
     for (const side of ['left', 'right'] as const) {
       const offset = positions.length / 3;
       const centerA = (a.left + a.right) / 2, centerB = (b.left + b.right) / 2;
-      positions.push(centerA, sign * .0038, a.z, a[side], 0, a.z, b[side], 0, b.z, centerB, sign * (section === 2 ? .0001 : .0038), b.z);
+      positions.push(centerA, sign * .0038, a.z, a[side], 0, a.z, b[side], 0, b.z, centerB, sign * (section === 2 ? 0 : .0038), b.z);
       uvs.push(.5, a.z * 4, side === 'left' ? 0 : 1, a.z * 4, side === 'left' ? 0 : 1, b.z * 4, .5, b.z * 4);
-      indices.push(offset, offset + 1, offset + 2, offset, offset + 2, offset + 3);
+      // Each bevel must face away from the blade's center plane.
+      const reverse = (sign > 0) !== (side === 'left');
+      if (reverse) indices.push(offset, offset + 2, offset + 1);
+      else indices.push(offset, offset + 1, offset + 2);
+      // At the point both edges and the center meet: no degenerate second triangle.
+      if (b.left !== b.right) {
+        if (reverse) indices.push(offset, offset + 3, offset + 2);
+        else indices.push(offset, offset + 2, offset + 3);
+      }
     }
   }
   VertexData.ComputeNormals(positions, indices, normals);
