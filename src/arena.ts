@@ -20,7 +20,7 @@ import { captureGeometry, TARGET_HEALTH, type CoverSurface, type CoverMaterial }
 import { buildBotWeapon, botFlashMaterial } from './botWeapon';
 import { createPatrol, PATROL_ROUTES, PatrolNavigation, resetPatrol, walkingPose, type Patrol } from './patrol';
 
-export type Target = { root: TransformNode; home: Vector3; meshes: Mesh[]; index: number; health: number; respawnAt: number; patrol: Patrol; animate: (dt: number, now: number) => void; reset: () => void; setCombatPose: (aiming: boolean, yaw: number, pitch: number, shotAge: number) => void };
+export type Target = { root: TransformNode; home: Vector3; meshes: Mesh[]; index: number; health: number; respawnAt: number; patrol: Patrol; animate: (dt: number, now: number) => void; reset: () => void; setCombatPose: (aiming: boolean, yaw: number, pitch: number, shotAge: number, reloading?: boolean, reloadProgress?: number, boltProgress?: number) => void };
 export function buildArena(scene: Scene, shadows: ShadowGenerator) {
   const solids: Solid[] = [];
   const targets: Target[] = [];
@@ -371,17 +371,21 @@ export function buildArena(scene: Scene, shadows: ShadowGenerator) {
     part('back chest marker', 0, 1.22, .14, .13, .17, .025, orange, upperBody);
     const patrol = createPatrol(route, navigation.get(home.y)!, index);
     const gun = buildBotWeapon(scene, upperBody, shadows, steel, black, enemyFlash);
-    const setCombatPose = (aiming: boolean, yaw: number, pitch: number, shotAge: number) => {
+    const setCombatPose = (aiming: boolean, yaw: number, pitch: number, shotAge: number, reloading = false, reloadProgress = 0, boltProgress = 0) => {
       const relativeYaw = yaw - patrol.heading;
       upperBody.rotation.y = aiming ? Math.atan2(Math.sin(relativeYaw), Math.cos(relativeYaw)) : 0;
-      gun.root.position.set(aiming ? .10 : .22, aiming ? 1.16 : .94, aiming ? -.37 : -.10);
-      gun.root.rotation.set(aiming ? pitch : -.75, 0, aiming ? 0 : -.15);
+      const reloadDip = reloading ? Math.sin(Math.PI * Math.max(0, Math.min(1, reloadProgress))) : 0;
+      const kick = shotAge >= 0 && shotAge < .25 ? Math.exp(-shotAge * 18) : 0;
+      gun.root.position.set(aiming ? .10 : .22, aiming ? 1.16 - reloadDip * .15 : .94, aiming ? -.37 + kick * .055 : -.10);
+      gun.root.rotation.set(aiming ? pitch - reloadDip * .45 + kick * .04 : -.75, 0, aiming ? reloadDip * -.12 : -.15);
+      gun.updateBolt(boltProgress);
       gun.flash.setEnabled(aiming && shotAge >= 0 && shotAge < .05);
       if (aiming) {
         // Legs keep their patrol gait while the torso and hands shoulder the weapon.
         arms[0].shoulder.rotation.set(1.15 + pitch * .6, 0, -.40);
         arms[1].shoulder.rotation.set(1.10 + pitch * .6, 0, -.40);
-        arms[0].elbow.rotation.x = .10; arms[1].elbow.rotation.x = -.85;
+        arms[0].elbow.rotation.x = .10 - reloadDip * .8;
+        arms[1].elbow.rotation.x = -.85 + Math.sin(Math.PI * boltProgress) * .3;
         neck.rotation.y = 0;
       }
     };

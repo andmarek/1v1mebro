@@ -27,7 +27,7 @@ export class RangeAudio {
   pistolShot() { this.noise(.12, .4, 5600); this.tone(175, .11, .38); this.tone(650, .025, .05, 'triangle', .05); }
   swap() { this.noise(.09, .075, 1700); this.tone(480, .035, .035, 'triangle', .09); }
   melee() { this.noise(.22, .14, 1200); }
-  botShot(distance: number) { const level = Math.max(.025, .18 / (1 + distance / 12)); this.noise(.13, level, 3600); this.tone(155, .1, level); }
+  botShot(distance: number) { const level = Math.max(.025, .26 / (1 + distance / 12)); this.noise(.28, level, 3600); this.tone(115, .24, level); this.tone(67, .18, level * .3, 'triangle', .07); }
   hurt() { this.noise(.08, .1, 500); this.tone(65, .12, .14); }
   bolt() { this.noise(0.065, 0.17, 2800); this.tone(420, 0.045, 0.07, 'square'); }
   hit(head: boolean) { this.tone(head ? 1300 : 950, 0.12, 0.18, 'triangle'); this.tone(1900, 0.1, 0.1, 'sine', 0.025); }
