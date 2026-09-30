@@ -69,4 +69,9 @@ export class Loadout {
     this.weapons.forEach(weapon => Object.assign(weapon, { ammo: weapon.tuning.magazineSize, readyAt: 0, reloadAt: 0, shots: 0, ads: 0, accurateSince: -Infinity }));
     this.lastShots.fill(-10);
   }
+  respawn() {
+    const shots = this.weapons.map(weapon => weapon.shots);
+    this.reset();
+    this.weapons.forEach((weapon, slot) => { weapon.shots = shots[slot]; });
+  }
 }

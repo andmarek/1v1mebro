@@ -75,3 +75,13 @@
 .loadout-slots>span.incoming{color:#e4e5cb}
 .loadout-slots kbd{margin:0;font-size:8px;padding:2px 4px;color:inherit}
 @media(max-width:740px){.loadout-slots{gap:8px;font-size:7px}.location>span:last-child{max-width:175px}}
+
+#match-setup{padding:0;color:#ecebdd;background:#111b16f7;border:1px solid #dbe6ce40;width:min(780px,calc(100vw - 36px));max-width:none;max-height:calc(100dvh - 36px);box-shadow:0 25px 120px #0009}
+#match-setup::backdrop{background:#070e0bd9;backdrop-filter:blur(7px)}
+#match-setup .settings-shell{max-height:calc(100dvh - 38px)}
+.match-content{padding:26px 30px;overflow:auto}.match-map>span{font:9px var(--mono);letter-spacing:2px;color:var(--lime)}.match-map>b{display:block;font:600 28px 'Barlow Condensed',Arial;margin:8px 0}.match-map p,.match-note{font:11px/1.7 var(--mono);color:#9faf93}.match-presets{display:flex;gap:10px;margin:20px 0}.match-presets button{background:#d2df970a;border:1px solid #d2df9740;padding:10px 12px;font:9px var(--mono);color:#d2df97}.match-presets button:hover{background:#d2df971c}.match-note{margin-bottom:0}#match-setup .play-button{width:220px;height:48px;font-size:17px}#match-setup .settings-footer>span{max-width:230px}#new-match{height:42px}
+.health-status{display:flex;align-items:center;gap:12px;margin:8px 0 2px;font:10px var(--mono)}.health-status b{font-size:16px}.health-track{width:90px;height:3px;background:#ffffff30}.health-track i{display:block;height:3px;background:var(--lime);transition:width .1s}.health-status.low .health-track i{background:#ef967c}#protection{font:8px var(--mono);color:var(--lime)}
+#damage-overlay{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse,transparent 35%,#a31b1440 75%,#8f170ea0);z-index:3;opacity:0;transition:opacity .12s}
+#respawn-screen{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center;background:#100b0a77;gap:12px;z-index:4}#respawn-screen>b{font:700 48px 'Barlow Condensed',Arial;letter-spacing:3px;color:#ecb09b}#respawn-screen>span{font:12px var(--mono);letter-spacing:1px}
+.match-rule-summary{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 20px;font:8px var(--mono);color:#adbba0}.match-rule-summary span{border:1px solid #dbe6ce25;padding:7px}
+@media(max-width:620px){.match-content{padding:20px}#match-setup .settings-footer{flex-wrap:wrap}#match-setup .play-button{width:100%}.health-status{gap:8px}.health-track{width:60px}}

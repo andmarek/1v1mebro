@@ -3,6 +3,12 @@ import { Loadout, WEAPONS, HOLSTER_SECONDS, SWAP_SECONDS } from './loadout';
 import { Firearm } from './simulation';
 
 describe('two-weapon loadout', () => {
+  it('refills after death without losing session shot counts', () => {
+    const loadout = new Loadout(); loadout.fire(0); loadout.request(1, .1); loadout.update(.4, .3, false, .18); loadout.fire(.4);
+    loadout.respawn();
+    expect(loadout.weapons.map(w => w.ammo)).toEqual([5, 15]);
+    expect(loadout.shots).toBe(2); expect(loadout.active).toBe(0);
+  });
   it('blocks shots and reloads through the whole holster/draw animation', () => {
     const l = new Loadout(); l.request(1, 0);
     l.update(.1, .1, true, .18);
