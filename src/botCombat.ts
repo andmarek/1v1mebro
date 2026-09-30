@@ -37,8 +37,8 @@ const muzzle = (bot: BotSnapshot): CombatVector => ({ x: bot.x, y: bot.y + 1.34,
 const torso = (player: PlayerSnapshot): CombatVector => ({ x: player.x, y: player.y + player.height * .62, z: player.z });
 
 /** Shot accuracy is geometric: a ray must intersect the current player volume, including crouch height. */
-export function hitsPlayer(origin: CombatVector, direction: CombatVector, player: PlayerSnapshot): boolean {
-  if (!player.alive) return false;
+export function playerHitDistance(origin: CombatVector, direction: CombatVector, player: PlayerSnapshot): number | null {
+  if (!player.alive) return null;
   const bounds = [
     [player.x - .3, player.x + .3, origin.x, direction.x],
     [player.y + .06, player.y + player.height + .1, origin.y, direction.y],
@@ -46,12 +46,15 @@ export function hitsPlayer(origin: CombatVector, direction: CombatVector, player
   ];
   let near = 0, far = RANGE;
   for (const [min, max, start, delta] of bounds) {
-    if (Math.abs(delta) < 1e-9) { if (start < min || start > max) return false; continue; }
+    if (Math.abs(delta) < 1e-9) { if (start < min || start > max) return null; continue; }
     const a = (min - start) / delta, b = (max - start) / delta;
     near = Math.max(near, Math.min(a, b)); far = Math.min(far, Math.max(a, b));
-    if (near > far) return false;
+    if (near > far) return null;
   }
-  return far > 0;
+  return far > 0 ? near : null;
+}
+export function hitsPlayer(origin: CombatVector, direction: CombatVector, player: PlayerSnapshot): boolean {
+  return playerHitDistance(origin, direction, player) !== null;
 }
 
 /** No render/engine dependency; nine patrol bots share a bounded, cover-aware attack budget. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BotCombat, hitsPlayer, PlayerLife, type BotShot } from './botCombat';
+import { BotCombat, hitsPlayer, playerHitDistance, PlayerLife, type BotShot } from './botCombat';
 import type { BotSnapshot, PlayerSnapshot } from './match';
 import { NullEngine } from '@babylonjs/core/Engines/nullEngine';
 import { Scene } from '@babylonjs/core/scene';
@@ -41,6 +41,12 @@ describe('player life', () => {
 });
 
 describe('bot combat', () => {
+  it('returns the exact player entry distance so cover behind the hit cannot block it', () => {
+    const origin = { x: 0, y: 1, z: 0 }, direction = { x: 0, y: 0, z: 1 };
+    expect(playerHitDistance(origin, direction, player(10))).toBeCloseTo(9.7);
+    expect(playerHitDistance(origin, { x: 0, y: 0, z: -1 }, player(10))).toBeNull();
+    expect(playerHitDistance(origin, direction, { ...player(10), alive: false })).toBeNull();
+  });
   it('requires line of sight and stays within acquisition range', () => {
     const combat = new BotCombat();
     expect(simulate(combat, 3, [bot()], player(), () => false)).toHaveLength(0);
