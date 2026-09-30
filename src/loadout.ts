@@ -4,12 +4,13 @@ export type WeaponSlot = 0 | 1;
 export type WeaponSpec = WeaponTuning & {
   name: string; label: string; bodyDamage: number; energy: number;
   aimSeconds: number; aimFov: number; lookReduction: number; recoil: number;
+  moveScale: number; adsMoveScale: number;
 };
 export const WEAPONS: readonly WeaponSpec[] = [
   { name: 'INTERVENTION', label: 'BOLT-ACTION / .408', magazineSize: 5, fireSeconds: .92, reloadSeconds: 2.15,
-    quickscope: true, bodyDamage: 150, energy: 1, aimSeconds: .18, aimFov: .235, lookReduction: .68, recoil: 1 },
+    quickscope: true, bodyDamage: 150, energy: 1, aimSeconds: .18, aimFov: .235, lookReduction: .68, recoil: 1, moveScale: .95, adsMoveScale: .62 },
   { name: 'FIELD-9', label: 'SEMI-AUTO / 9 MM', magazineSize: 15, fireSeconds: .18, reloadSeconds: 1.35,
-    quickscope: false, bodyDamage: 35, energy: .35, aimSeconds: .12, aimFov: .78, lookReduction: .22, recoil: .34 },
+    quickscope: false, bodyDamage: 35, energy: .35, aimSeconds: .12, aimFov: .78, lookReduction: .22, recoil: .34, moveScale: 1, adsMoveScale: .75 },
 ];
 export const HOLSTER_SECONDS = .12;
 export const DRAW_SECONDS = .16;

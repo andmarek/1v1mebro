@@ -2,11 +2,17 @@ export type Solid = { minX: number; maxX: number; minY: number; maxY: number; mi
 export type Player = { x: number; y: number; z: number; vy: number; grounded: boolean };
 export const PLAYER_RADIUS = 0.32;
 export const PLAYER_HEIGHT = 1.75;
-export const GRAVITY = 24;
+export const CROUCH_HEIGHT = 1.25;
+// IW4L's 800-unit gravity, scaled to this arena's 70-unit / 1.75 m hull.
+export const GRAVITY = 20;
 const overlaps = (p: Player, s: Solid, height: number) =>
   p.x + PLAYER_RADIUS > s.minX && p.x - PLAYER_RADIUS < s.maxX &&
   p.z + PLAYER_RADIUS > s.minZ && p.z - PLAYER_RADIUS < s.maxZ &&
   p.y + height > s.minY + 0.001 && p.y < s.maxY - 0.001;
+
+export function hasClearance(p: Player, height: number, solids: Solid[]) {
+  return !solids.some(s => overlaps(p, s, height));
+}
 
 /** A fixed-step character controller. Position is at the player's feet. */
 export function movePlayer(p: Player, dx: number, dz: number, dt: number, solids: Solid[], height = PLAYER_HEIGHT) {

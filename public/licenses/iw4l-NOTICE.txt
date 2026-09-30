@@ -1,0 +1,24 @@
+IW4L
+Copyright 2026 vladtrc
+IW4L was originally developed by vladtrc.
+https://github.com/vladtrc/iw4L
+
+IW4L is licensed under the Apache License, Version 2.0.
+The complete license is supplied in iw4l-Apache-2.0.txt alongside this notice.
+
+DEADBOLT uses adapted movement and presentation algorithms from IW4L commit
+1a0daffd182d808ad3fa43adc6da0200fe78610d. Relevant reference files:
+  crates/movement_iw4/src/accelerate.rs, friction.rs, cmdscale.rs, walk.rs, air.rs
+  crates/movement_iw4/src/stance.rs
+  crates/weapon_iw4/src/sway.rs, view_bob.rs, kick.rs
+  crates/sim/src/step.rs
+
+Modifications for DEADBOLT:
+  Reimplemented in TypeScript for the existing Babylon.js range; converted
+  physical units to the arena's meter scale; retained custom run/jump tuning,
+  buffered jumps, coyote time and bounded horizontal speed; integrated real
+  crouch clearance with the existing box collider; used custom weapon speed
+  scales, exponential sway smoothing, conservative bob and damped recoil springs.
+
+Only the algorithms listed above are adapted. No IW4L fonts, Call of Duty
+assets, original game binaries, or shader translation code are included.

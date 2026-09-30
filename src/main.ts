@@ -18,11 +18,12 @@ import { settingsMarkup, setupSettings } from './settings';
 import { RangeAudio } from './audio';
 import { bulletDamage, resolveCover, traceCover } from './ballistics';
 import { ImpactMarks } from './impacts';
-import { MovementController, MOVEMENT } from './movement';
+import { MovementController } from './movement';
 import { buildRifle } from './weapon';
 import { type Player } from './simulation';
 import { buildPistol } from './pistol';
 import { Loadout, type WeaponSlot } from './loadout';
+import { ViewMotion, WALK_BOB_RATE } from './viewMotion';
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <canvas id="game" aria-label="First-person quickscope practice arena"></canvas>
@@ -79,13 +80,14 @@ const pistolModel = buildPistol(scene, camera); pistolModel.root.setEnabled(fals
 const loadout = new Loadout();
 const player: Player = { x: 0, y: 0, z: -23, vy: 0, grounded: true };
 const movement = new MovementController();
+const viewMotion = new ViewMotion();
 const keys = new Set<string>();
 let now = 0, running = false, started = false, dragging = false, fallback = false;
 let aimingMouse = false, aimingToggle = false, pendingFire = false, pendingJump = false;
 let toggleAim = false, rightMouseDownHandled = false;
 let mouseFiredOnDown = false, dragDistance = 0;
-let yaw = 0, pitch = 0.024, recoil = 0, bob = 0, eyeHeight = 1.65;
-let cameraEyeY = 1.65, landingDip = 0, sprintBlend = 0, motionBlend = 0, stepDistance = 0;
+let yaw = 0, pitch = 0.024, eyeHeight = 1.65;
+let cameraEyeY = 1.65, stepDistance = 0, travelSpeed = 0, sprinting = false;
 let sensitivity = 1, adsSeconds = 0.18, movingTargets = true, invertY = false;
 let kills = 0, quicks = 0, hits = 0, points = 0, hitUntil = 0, feedbackUntil = 0;
 let boltSoundAt = 0, notificationUntil = 0;
@@ -109,6 +111,7 @@ async function play() {
     fallback = document.pointerLockElement !== canvas;
   } catch { fallback = true; }
   started = true; running = true; clearInput(); menu.hidden = true; hud.hidden = false;
+  viewMotion.resetLook(yaw, pitch);
   canvas.focus(); lastFrame = performance.now(); accumulator = 0;
   if (fallback) {
     $('input-hint').textContent = 'DRAG / ARROWS LOOK / RMB AIM / Q SWAP / CLICK FIRE / ESC PAUSE';
@@ -117,8 +120,9 @@ async function play() {
 }
 function reset() {
   Object.assign(player, { x: 0, y: 0, z: -23, vy: 0, grounded: true });
-  yaw = recoil = now = bob = 0; pitch = 0.024;
-  movement.reset(); cameraEyeY = eyeHeight = 1.65; landingDip = sprintBlend = motionBlend = stepDistance = 0; kills = quicks = hits = points = 0;
+  yaw = now = 0; pitch = 0.024;
+  movement.reset(); viewMotion.reset(yaw, pitch); cameraEyeY = eyeHeight = 1.65;
+  stepDistance = travelSpeed = 0; sprinting = false; kills = quicks = hits = points = 0;
   loadout.reset(); boltSoundAt = hitUntil = feedbackUntil = notificationUntil = 0;
   inspectStarted = -10; lastWheelAt = -10;
   impacts.clear();
@@ -230,14 +234,15 @@ function fire() {
   const shot = loadout.fire(now);
   if (!shot) { if (!loadout.swapping && !loadout.weapon.ammo && !loadout.weapon.reloadAt) { audio.dry(); notify('Magazine empty — press R to reload'); } return; }
   const spec = loadout.spec;
-  recoil = spec.recoil;
+  viewMotion.fire(spec.recoil);
   if (loadout.active === 0) { boltSoundAt = now + .35; audio.shot(); } else audio.pistolShot();
   // Scope accuracy is deliberately independent of the scope's visual animation.
   const spread = loadout.active === 0
     ? shot.scoped ? (player.grounded ? .00035 : .005) : .045 * (1 - loadout.weapon.ads * .7)
     : shot.scoped ? (player.grounded ? .0012 : .004) : .024 * (1 - loadout.weapon.ads * .8);
-  const forward = new Vector3(Math.sin(yaw) * Math.cos(pitch), -Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
-  const right = new Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+  // Fire through the presented crosshair, including the recovering camera kick.
+  const forward = camera.getForwardRay(1).direction;
+  const right = Vector3.Cross(Vector3.Up(), forward).normalize();
   const up = Vector3.Cross(forward, right).normalize();
   const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * spread;
   const direction = forward.add(right.scale(Math.cos(a) * r)).add(up.scale(Math.sin(a) * r)).normalize();
@@ -285,32 +290,32 @@ function fixedUpdate(dt: number) {
   if (aiming || loadout.weapon.reloadAt) inspectStarted = -10;
   const previousSlot = loadout.active;
   loadout.update(now, dt, aiming, adsSeconds);
-  if (previousSlot !== loadout.active) recoil = 0;
+  if (previousSlot !== loadout.active) viewMotion.clearRecoil();
   if (pendingJump) movement.queueJump();
   pendingJump = false;
   const motion = movement.update(player, {
     strafe: Number(keys.has('KeyD')) - Number(keys.has('KeyA')),
     forward: Number(keys.has('KeyW')) - Number(keys.has('KeyS')),
     yaw, sprint: keys.has('ShiftLeft') || keys.has('ShiftRight'), aiming, crouching,
+    ads: loadout.weapon.ads, moveScale: loadout.spec.moveScale, adsMoveScale: loadout.spec.adsMoveScale,
+    sprintBlocked: loadout.swapping || !!loadout.weapon.reloadAt || now - loadout.lastShots[loadout.active] < .2,
   }, dt, arena.solids);
-  const travelSpeed = motion.distance / dt;
+  travelSpeed = motion.distance / dt;
+  sprinting = motion.sprinting;
   const ease = (rate: number) => 1 - Math.exp(-rate * dt);
-  motionBlend += (Math.min(1, travelSpeed / MOVEMENT.sprintSpeed) - motionBlend) * ease(16);
-  sprintBlend += ((motion.sprinting && travelSpeed > MOVEMENT.runSpeed ? 1 : 0) - sprintBlend) * ease(10);
-  eyeHeight += ((crouching ? 1.05 : 1.65) - eyeHeight) * ease(16);
+  eyeHeight += ((movement.crouching ? 1.0 : 1.65) - eyeHeight) * ease(16);
   cameraEyeY += (player.y + eyeHeight - cameraEyeY) * ease(player.grounded ? 22 : 42);
-  landingDip *= Math.exp(-14 * dt);
   if (motion.jumped) stepDistance = 0;
   if (motion.landed) {
     stepDistance = 0;
-    if (motion.landingSpeed > 4) { landingDip = Math.min(.075, (motion.landingSpeed - 4) * .012); audio.step(); }
+    viewMotion.land(motion.landingSpeed);
+    if (motion.landingSpeed > 4) audio.step();
   }
   if (player.grounded && motion.distance > .00001) {
-    bob += motion.distance * 1.7;
     stepDistance += motion.distance;
-    if (stepDistance >= (motion.sprinting ? 2.05 : crouching ? 1.5 : 1.65)) { audio.step(); stepDistance = 0; }
+    const stride = motion.sprinting ? 1.08 : movement.crouching ? .75 : Math.PI / WALK_BOB_RATE;
+    if (stepDistance >= stride) { audio.step(); stepDistance %= stride; }
   }
-  recoil = Math.max(0, recoil - dt * 5.5);
   if (boltSoundAt && now >= boltSoundAt) { if (loadout.active === 0) audio.bolt(); boltSoundAt = 0; }
   for (const target of arena.targets) {
     if (target.respawnAt && now >= target.respawnAt) { target.reset(); target.root.setEnabled(true); target.respawnAt = 0; }
@@ -320,13 +325,18 @@ function fixedUpdate(dt: number) {
     updatePatrol(target.patrol, dt, movingTargets, blockers);
     target.animate(dt, now);
   }
-  camera.position.set(player.x, cameraEyeY - landingDip * (1 - loadout.weapon.ads * .85) + (player.grounded ? Math.sin(bob) * .025 * motionBlend * (1 - loadout.weapon.ads) : 0), player.z);
-  camera.rotation.set(pitch - recoil * 0.065, yaw, 0);
-  camera.fov = 0.98 + (loadout.spec.aimFov - 0.98) * smooth(loadout.weapon.ads) + .045 * sprintBlend * (1 - smooth(loadout.weapon.ads));
+  positionCamera();
   if (pendingFire) { pendingFire = false; fire(); }
   impacts.update(now);
 }
 const smooth = (v: number) => v * v * (3 - 2 * v);
+function positionCamera() {
+  const eyeY = Math.min(cameraEyeY + viewMotion.cameraY, player.y + movement.height - .08);
+  camera.position.set(player.x, eyeY, player.z);
+  camera.rotation.set(pitch + viewMotion.cameraPitch, yaw, viewMotion.cameraRoll);
+  const ads = smooth(loadout.weapon.ads);
+  camera.fov = .98 + (loadout.spec.aimFov - .98) * ads + .045 * viewMotion.sprint * (1 - ads);
+}
 function updateHud() {
   $('kills').textContent = String(kills).padStart(2, '0');
   $('quicks').textContent = String(quicks).padStart(2, '0');
@@ -355,8 +365,15 @@ engine.runRenderLoop(() => {
   if (running) {
     accumulator += dt;
     while (accumulator >= 1 / 120) { fixedUpdate(1 / 120); accumulator -= 1 / 120; }
+    viewMotion.update(dt, {
+      yaw, pitch, ads: loadout.weapon.ads, speed: travelSpeed, grounded: player.grounded,
+      sprinting, crouching: movement.crouching,
+      strafeSpeed: movement.vx * Math.cos(yaw) - movement.vz * Math.sin(yaw),
+    });
+    positionCamera();
+    const recoil = viewMotion.gunKick;
     const ads = smooth(loadout.weapon.ads), shotAge = now - loadout.lastShots[loadout.active];
-    const sway = Math.sin(bob) * .012 * motionBlend * (1 - ads) * Number(player.grounded) + Math.sin(now * 1.5) * .0015 * (1 - motionBlend) * (1 - ads * .9);
+    const sway = viewMotion.weaponY;
     const reloadT = loadout.weapon.reloadAt ? 1 - (loadout.weapon.reloadAt - now) / loadout.spec.reloadSeconds : 0;
     const inspectT = (now - inspectStarted) / 2.4;
     const inspect = inspectT >= 0 && inspectT < 1 ? Math.sin(inspectT * Math.PI) : 0;
@@ -365,6 +382,11 @@ engine.runRenderLoop(() => {
     const model = loadout.active === 0 ? viewmodel : pistolModel;
     if (loadout.active === 0) viewmodel.updatePose(ads, recoil, sway, shotAge, reloadT, !!loadout.weapon.reloadAt, inspect);
     else pistolModel.updatePose(ads, recoil, sway, shotAge, reloadT, !!loadout.weapon.reloadAt, inspect, loadout.weapon.ammo === 0);
+    model.root.position.x += viewMotion.weaponX;
+    model.root.position.z += viewMotion.weaponZ;
+    model.root.rotation.x += viewMotion.weaponPitch;
+    model.root.rotation.y += viewMotion.weaponYaw;
+    model.root.rotation.z += viewMotion.weaponRoll;
     const holster = smooth(loadout.holsterAmount(now));
     model.root.position.y -= holster * .38;
     model.root.rotation.x += holster * .35;

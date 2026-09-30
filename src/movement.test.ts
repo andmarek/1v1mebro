@@ -26,8 +26,8 @@ describe('fluid movement', () => {
     advance(p, movement, input({ forward: 1, sprint: true }), .2);
     expect(movement.speed).toBeCloseTo(MOVEMENT.sprintSpeed);
     const z = p.z;
-    advance(p, movement, input(), .15);
-    expect(movement.speed).toBeCloseTo(0); expect(p.z - z).toBeLessThan(.6);
+    advance(p, movement, input(), .45);
+    expect(movement.speed).toBeCloseTo(0); expect(p.z - z).toBeLessThan(1.4);
   });
   it('keeps diagonal movement at the same speed as forward movement', () => {
     for (const sprint of [false, true]) {
@@ -47,7 +47,7 @@ describe('fluid movement', () => {
     advance(p, movement, input({ forward: 1, sprint: true, crouching: true }), .3);
     expect(movement.speed).toBeCloseTo(MOVEMENT.crouchSpeed);
     advance(p, movement, input({ forward: -1, sprint: true }), .3);
-    expect(movement.speed).toBeCloseTo(MOVEMENT.runSpeed);
+    expect(movement.speed).toBeCloseTo(MOVEMENT.runSpeed * MOVEMENT.backScale);
   });
   it('steers a sprint jump while retaining bounded takeoff momentum after releasing sprint', () => {
     const p = player(), movement = new MovementController();
@@ -58,7 +58,8 @@ describe('fluid movement', () => {
     advance(p, movement, input(), .08);
     expect(movement.speed).toBeCloseTo(speed);
     advance(p, movement, input({ strafe: 1 }), .2);
-    expect(movement.vx).toBeGreaterThan(2); expect(movement.vz).toBeGreaterThan(0);
+    expect(movement.vx).toBeGreaterThan(.8); expect(movement.vx).toBeLessThan(1.5);
+    expect(movement.vz).toBeGreaterThan(8);
     expect(movement.speed).toBeCloseTo(MOVEMENT.sprintSpeed);
   });
   it('cannot gain unlimited speed from repeated jumping or midair sprint toggles', () => {
@@ -136,13 +137,14 @@ describe('fluid movement', () => {
         const dx = x - p.x, dz = z - p.z;
         if (Math.hypot(dx, dz) < .09) {
           // Release movement before turning on the narrow landing, as a player would.
-          for (let brake = 0; brake < 18; brake++) {
+          for (let brake = 0; brake < 60; brake++) {
             movement.update(p, input(), dt, solids);
             expect(p.grounded, `Braking near ${x}, ${z} at ${p.x}, ${p.y}, ${p.z}`).toBe(true);
           }
           return;
         }
-        movement.update(p, input({ forward: 1, yaw: Math.atan2(dx, dz) }), dt, solids);
+        // Ease off before narrow landings; the friction model retains stopping momentum.
+        movement.update(p, input({ forward: Math.min(1, Math.hypot(dx, dz) / 1.2), yaw: Math.atan2(dx, dz) }), dt, solids);
         expect(p.grounded, `Approaching ${x}, ${z} at ${p.x}, ${p.y}, ${p.z}`).toBe(true);
       }
       throw new Error(`Stuck at ${p.x}, ${p.y}, ${p.z}`);
@@ -166,5 +168,49 @@ describe('fluid movement', () => {
       expect(p.grounded).toBe(true);
     }
     expect(p.y).toBeCloseTo(0); expect(p.z).toBeLessThan(-6.4);
+  });
+  it('backpedals and strafes more slowly without granting a diagonal boost', () => {
+    const speeds = [{ forward: 1 }, { strafe: 1 }, { forward: -1 }, { forward: -1, strafe: 1 }].map(controls => {
+      const p = player(), movement = new MovementController();
+      advance(p, movement, input(controls), 1);
+      return movement.speed;
+    });
+    expect(speeds[1]).toBeLessThan(speeds[0]);
+    expect(speeds[2]).toBeLessThan(speeds[1]);
+    expect(speeds[3]).toBeCloseTo(speeds[1]);
+  });
+  it('blends aim movement speed and respects weapon weight and sprint action blocks', () => {
+    const p = player(), movement = new MovementController();
+    const controls = input({ forward: 1, sprint: true, aiming: true, moveScale: .95, adsMoveScale: .62 });
+    advance(p, movement, { ...controls, ads: 0 }, 1); const hip = movement.speed;
+    advance(p, movement, { ...controls, ads: .5 }, 1); const halfway = movement.speed;
+    advance(p, movement, { ...controls, ads: 1 }, 1); const aimed = movement.speed;
+    expect(aimed).toBeLessThan(halfway); expect(halfway).toBeLessThan(hip);
+    expect(hip).toBeLessThan(MOVEMENT.runSpeed);
+    advance(p, movement, input({ forward: 1, sprint: true, sprintBlocked: true }), 1);
+    expect(movement.speed).toBeCloseTo(MOVEMENT.runSpeed);
+    expect(movement.update(p, input({ forward: 1, sprint: true, sprintBlocked: true }), dt, []).sprinting).toBe(false);
+  });
+  it('crouches under cover and cannot stand or jump until the full hull is clear', () => {
+    const roof: Solid = { minX: -2, maxX: 2, minZ: 1, maxZ: 4, minY: 1.4, maxY: 2 };
+    const p = player(), movement = new MovementController();
+    advance(p, movement, input({ forward: 1 }), .5, [roof]);
+    expect(p.z).toBeLessThan(1);
+    advance(p, movement, input({ forward: 1, crouching: true }), 1, [roof]);
+    expect(p.z).toBeGreaterThan(1); expect(p.z).toBeLessThan(4);
+    advance(p, movement, input(), .25, [roof]);
+    expect(movement.crouching).toBe(true);
+    expect(movement.height).toBe(1.25);
+    movement.queueJump(); expect(movement.update(p, input(), dt, [roof]).jumped).toBe(false);
+    advance(p, movement, input({ forward: 1 }), 1, [roof]);
+    expect(p.z).toBeGreaterThan(4.32); expect(movement.crouching).toBe(false);
+    expect(movement.height).toBe(1.75);
+    movement.queueJump(); expect(movement.update(p, input(), dt, [roof]).jumped).toBe(true);
+  });
+  it('handles partial movement input without changing its intended direction', () => {
+    const p = player(), movement = new MovementController();
+    advance(p, movement, input({ forward: .5 }), 1);
+    expect(movement.speed).toBeCloseTo(MOVEMENT.runSpeed * .5);
+    expect(p.x).toBe(0);
   });
 });
