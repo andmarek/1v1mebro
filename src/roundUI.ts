@@ -4,6 +4,11 @@ import type { OutroStage } from './roundOutro';
 
 export const roundUIMarkup = `
 <div id="round-countdown" hidden aria-live="polite"><span>FREE-FOR-ALL / THE SCRAPYARD</span><b id="round-countdown-number">3</b><p id="round-countdown-rule"></p></div>
+<section id="final-kill-replay" hidden aria-label="Final kill replay">
+  <header><span class="replay-dot"></span><b>FINAL KILL</b><span>YOUR PERSPECTIVE / REPLAY</span></header>
+  <footer><span>RECORDED MOMENTS BEFORE THE FINAL ELIMINATION</span><button id="replay-skip">SKIP REPLAY <span>ESC ↗</span></button></footer>
+  <div id="replay-progress" role="progressbar" aria-label="Replay progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
+</section>
 <section id="round-end" hidden aria-labelledby="round-end-title" aria-live="polite">
   <div class="round-end-card"><span>THE SCRAPYARD / ROUND COMPLETE</span><h2 id="round-end-title">VICTORY</h2><p id="round-end-reason"></p>
     <div class="round-end-stats"><div><span>ELIMINATIONS</span><b id="round-end-kills">0</b></div><div><span>DEATHS</span><b id="round-end-deaths">0</b></div><div><span>SCORE</span><b id="round-end-score">0</b></div></div>
@@ -19,24 +24,35 @@ export const roundUIMarkup = `
   </div>
 </dialog>`;
 const clock = (seconds: number): string => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
-export function setupRoundUI(callbacks: { rematch: () => void; newMatch: () => void; viewStandings: () => void }) {
+export function setupRoundUI(callbacks: { rematch: () => void; newMatch: () => void; viewStandings: () => void; skipReplay: () => void }) {
   const $ = (id: string) => document.getElementById(id)!;
   const countdown = $('round-countdown'), results = $('round-results') as HTMLDialogElement;
   const end = $('round-end');
+  const replay = $('final-kill-replay');
   const write = (id: string, text: string) => { const element = $(id); if (element.textContent !== text) element.textContent = text; };
   let renderedResults = false;
   let bannerShown = false;
+  let replayShown = false;
   // Results remain available until the player picks an action; Escape cannot resume a finished match.
   results.addEventListener('cancel', event => event.preventDefault());
   $('round-rematch').addEventListener('click', () => { results.close(); callbacks.rematch(); });
   // Keep the results available beneath match setup so cancelling setup preserves this screen.
   $('round-new-match').addEventListener('click', () => callbacks.newMatch());
   $('round-view-standings').addEventListener('click', callbacks.viewStandings);
+  $('replay-skip').addEventListener('click', callbacks.skipReplay);
   document.addEventListener('keydown', event => {
+    if (event.code === 'Escape' && !replay.hidden) { event.preventDefault(); callbacks.skipReplay(); return; }
     if (event.code === 'Escape' && !end.hidden) { event.preventDefault(); callbacks.viewStandings(); }
   });
   return {
-    render(snapshot: RoundSnapshot, localPlayerId = 'player', visible = true, stage: OutroStage = 'results') {
+    render(snapshot: RoundSnapshot, localPlayerId = 'player', visible = true, stage: OutroStage = 'results', replayProgress = 0) {
+      replay.hidden = !visible || snapshot.phase !== 'finished' || stage !== 'replay';
+      if (!replay.hidden) {
+        const progress = Math.max(0, Math.min(100, Math.round(replayProgress * 100)));
+        $('replay-progress').setAttribute('aria-valuenow', String(progress));
+        ($('replay-progress').firstElementChild as HTMLElement).style.width = `${progress}%`;
+        if (!replayShown) { replayShown = true; $('replay-skip').focus({ preventScroll: true }); }
+      }
       end.hidden = !visible || snapshot.phase !== 'finished' || stage !== 'banner';
       countdown.hidden = !visible || snapshot.phase !== 'countdown';
       if (snapshot.phase === 'countdown') {
@@ -45,7 +61,7 @@ export function setupRoundUI(callbacks: { rematch: () => void; newMatch: () => v
         write('round-countdown-rule', options.killLimit ? `FIRST TO ${options.killLimit} ELIMINATIONS` : options.timeLimitSeconds ? `MOST ELIMINATIONS IN ${clock(options.timeLimitSeconds)}` : 'UNLIMITED PRACTICE');
       }
       if (snapshot.phase !== 'finished') {
-        renderedResults = bannerShown = false; if (results.open) results.close(); return;
+        renderedResults = bannerShown = replayShown = false; if (results.open) results.close(); return;
       }
       if (!renderedResults) {
         const local = snapshot.standings.find(entry => entry.id === localPlayerId);

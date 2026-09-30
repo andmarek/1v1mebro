@@ -5,6 +5,15 @@ import { createPatrol, PatrolNavigation } from './patrol';
 import { INITIAL_SPAWN } from './spawning';
 
 describe('round outro presentation', () => {
+  it('inserts a skippable replay before the banner and clears it on rematch', () => {
+    const outro = new RoundOutro(); outro.begin(); outro.scheduleReplay(4.65);
+    outro.advance(FINAL_IMPACT_SECONDS); expect(outro.stage).toBe('replay'); expect(outro.replayElapsed).toBe(0);
+    outro.advance(2); expect(outro.replayElapsed).toBe(2); expect(outro.aimScale).toBe(1);
+    outro.skipReplay(); expect(outro.stage).toBe('banner'); expect(outro.aimScale).toBe(1);
+    outro.advance(.325); expect(outro.aimScale).toBeCloseTo(.5);
+    outro.skip(); expect(outro.stage).toBe('results');
+    outro.reset(); outro.begin(); outro.advance(FINAL_IMPACT_SECONDS); expect(outro.stage).toBe('banner');
+  });
   it('holds the impact, lowers sights smoothly, then reveals results', () => {
     const outro = new RoundOutro();
     expect(outro.stage).toBe('idle'); expect(outro.begin()).toBe(true);
@@ -25,8 +34,8 @@ describe('round outro presentation', () => {
     const patrol = createPatrol([{ x: 0, z: 5 }, { x: 3, z: 5 }], new PatrolNavigation([], 0), 0);
     const sim = new MatchSimulation([{ id: 0, home: { x: 0, y: 0, z: 5 }, patrol }], undefined, { killLimit: 1, timeLimitSeconds: 60 });
     sim.advance(3, () => INITIAL_SPAWN); sim.fire(); sim.hitEnemy(0, 150, 'sniper');
-    const finished = sim.round.snapshot, outro = new RoundOutro(); outro.begin();
-    outro.advance(ROUND_OUTRO_SECONDS); sim.advance(ROUND_OUTRO_SECONDS, () => INITIAL_SPAWN);
+    const finished = sim.round.snapshot, outro = new RoundOutro(); outro.begin(); outro.scheduleReplay(4.65);
+    outro.advance(ROUND_OUTRO_SECONDS + 4.65); sim.advance(ROUND_OUTRO_SECONDS + 4.65, () => INITIAL_SPAWN);
     expect(sim.round.snapshot).toEqual(finished); expect(sim.enemies[0].health).toBe(0);
     expect(sim.fire()).toBeNull(); expect(sim.swap(1)).toBe(false); expect(sim.knife()).toBe(false);
   });
