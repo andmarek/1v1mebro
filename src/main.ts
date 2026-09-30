@@ -14,13 +14,13 @@ import { Ray } from '@babylonjs/core/Culling/ray';
 import { ImageProcessingConfiguration } from '@babylonjs/core/Materials/imageProcessingConfiguration';
 import { buildArena } from './arena';
 import { settingsMarkup, setupSettings } from './settings';
-import { RangeAudio } from './audio';
+import { RangeAudio, type FootstepSurface } from './audio';
 import { bulletDamage, resolveCover, traceCover } from './ballistics';
 import { ImpactMarks } from './impacts';
 import { buildRifle } from './weapon';
 import { buildPistol } from './pistol';
 import { type WeaponSlot } from './loadout';
-import { ViewMotion, WALK_BOB_RATE } from './viewMotion';
+import { ViewMotion, WALK_BOB_RATE, SPRINT_BOB_RATE, CROUCH_BOB_RATE } from './viewMotion';
 import { DEFAULT_MATCH_RULES, allowsDamage, type MatchRules, type CombatVector, type DamageSource } from './match';
 import { matchSetupMarkup, setupMatch } from './matchSetup';
 import { selectMeleeTarget, MELEE_DAMAGE } from './melee';
@@ -97,6 +97,7 @@ const combatFeedback = setupCombatFeedback(id => id === 'player' ? 'YOU' : `ENEM
 const knifeModel = buildKnife(scene, camera);
 const combatEffects = new CombatEffects(scene);
 const outro = new RoundOutro();
+let outroCuePlayed = false;
 let rules: MatchRules = { ...DEFAULT_MATCH_RULES };
 let damageUntil = 0, lastAttacker = 0;
 const viewMotion = new ViewMotion();
@@ -117,7 +118,7 @@ function notify(message: string) { $('notification').textContent = message; noti
 function clearInput() { movement.cancelJump(); keys.clear(); aimingMouse = aimingToggle = rightMouseDownHandled = false; dragging = false; pendingFire = false; pendingJump = false; mouseFiredOnDown = false; dragDistance = 0; }
 function pause() {
   if (!running) return;
-  updateHud(); running = false; clearInput(); hud.hidden = true; menu.hidden = false;
+  updateHud(); running = false; audio.setActive(false); clearInput(); hud.hidden = true; menu.hidden = false;
   $('play-label').textContent = 'RETURN TO THE RANGE';
   $('start-note').textContent = `${kills} eliminations · ${life.deaths} deaths · ${points.toLocaleString()} points`;
   if (document.pointerLockElement) document.exitPointerLock();
@@ -130,6 +131,7 @@ async function play() {
     fallback = document.pointerLockElement !== canvas;
   } catch { fallback = true; }
   started = true; $('new-match').hidden = false; running = true; clearInput(); menu.hidden = true; hud.hidden = false;
+  audio.setActive(true);
   viewMotion.resetLook(yaw, pitch);
   canvas.focus(); lastFrame = performance.now(); accumulator = 0;
   if (fallback) {
@@ -138,7 +140,7 @@ async function play() {
   } else $('input-hint').textContent = 'WASD MOVE / RMB AIM / Q SWAP / E KNIFE / R RELOAD / ESC PAUSE';
 }
 function reset() {
-  outro.reset(); hud.classList.remove('round-ending', 'round-banner');
+  outro.reset(); outroCuePlayed = false; hud.classList.remove('round-ending', 'round-banner');
   simulation.reset(rules, roundOptions); previousSpawnId = INITIAL_SPAWN.id;
   yaw = now = 0; pitch = 0.024;
   movement.reset(); viewMotion.reset(yaw, pitch); cameraEyeY = eyeHeight = 1.65;
@@ -157,7 +159,7 @@ const matchSetup = setupMatch((next, options) => { rules = { ...next }; roundOpt
 const roundUI = setupRoundUI({ rematch: () => { reset(); void play(); }, newMatch: () => matchSetup.open(), viewStandings: () => outro.skip() });
 function finishRound() {
   if (simulation.round.phase !== 'finished' || !outro.begin()) return;
-  running = false; clearInput(); travelSpeed = 0; sprinting = false; updateHud();
+  running = false; audio.setActive(false); clearInput(); travelSpeed = 0; sprinting = false; updateHud();
   if (document.pointerLockElement) document.exitPointerLock();
 }
 function updateRuleSummary() {
@@ -329,6 +331,11 @@ function damageEnemy(index: number, damage: number, source: DamageSource, head =
   }
 }
 
+// Query only on actual footfalls/landings, using cached map surfaces rather than height guesses.
+function footstepSurface(): FootstepSurface {
+  const ray = new Ray(new Vector3(player.x, player.y + .08, player.z), new Vector3(0, -1, 0), .18);
+  return traceCover(ray, arena.cover)[0]?.surface.material === 'metal' ? 'metal' : 'sand';
+}
 function fixedUpdate(dt: number) {
   const tick = simulation.advance(dt, () => chooseSpawn(ARENA_SPAWNS, botSnapshots(), canSee, arena.solids, previousSpawnId));
   now = simulation.now;
@@ -363,12 +370,12 @@ function fixedUpdate(dt: number) {
   if (motion.landed) {
     stepDistance = 0;
     viewMotion.land(motion.landingSpeed);
-    if (motion.landingSpeed > 4) audio.step();
+    if (motion.landingSpeed > 4) audio.land(footstepSurface(), Math.min(1.6, motion.landingSpeed / 7));
   }
   if (player.grounded && motion.distance > .00001) {
     stepDistance += motion.distance;
-    const stride = motion.sprinting ? 1.08 : movement.crouching ? .75 : Math.PI / WALK_BOB_RATE;
-    if (stepDistance >= stride) { audio.step(); stepDistance %= stride; }
+    const stride = Math.PI / (motion.sprinting ? SPRINT_BOB_RATE : movement.crouching ? CROUCH_BOB_RATE : WALK_BOB_RATE);
+    if (stepDistance >= stride) { audio.step(footstepSurface(), movement.crouching ? .4 : motion.sprinting ? 1.25 : .85); stepDistance %= stride; }
   }
   if (boltSoundAt && now >= boltSoundAt) { if (loadout.active === 0) audio.bolt(); boltSoundAt = 0; }
   positionCamera();
@@ -495,6 +502,11 @@ engine.runRenderLoop(() => {
     while (running && accumulator >= 1 / 120) { fixedUpdate(1 / 120); accumulator -= 1 / 120; }
   }
   if (outro.presenting && !document.hidden) outro.advance(dt);
+  if (outro.stage === 'banner' && !outroCuePlayed) {
+    outroCuePlayed = true;
+    const winners = simulation.round.snapshot.winnerIds;
+    audio.roundEnd(winners.length > 1 ? 'draw' : winners.includes('player') ? 'win' : 'loss');
+  }
   const presenting = outro.presenting;
   hud.classList.toggle('round-ending', presenting);
   hud.classList.toggle('round-banner', outro.stage === 'banner');

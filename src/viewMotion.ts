@@ -4,6 +4,8 @@ import { MOVEMENT } from './movement';
 
 // Radians per meter; a footfall is half a full left/right cycle.
 export const WALK_BOB_RATE = 2;
+export const SPRINT_BOB_RATE = Math.PI / 2.1;
+export const CROUCH_BOB_RATE = Math.PI / 1.05;
 
 type MotionInput = {
   yaw: number; pitch: number; ads: number; speed: number; strafeSpeed: number;
@@ -78,7 +80,7 @@ export class ViewMotion {
     this.move = follow(this.move, input.grounded ? Math.min(1, input.speed / MOVEMENT.runSpeed) : 0, 14, dt);
     this.strafe = follow(this.strafe, input.grounded ? clamp(input.strafeSpeed / MOVEMENT.runSpeed, 1) : 0, 10, dt);
     this.sprint = follow(this.sprint, input.sprinting && input.grounded && input.speed > MOVEMENT.runSpeed * .8 ? 1 : 0, 10, dt);
-    if (input.grounded) this.phase += input.speed * dt * (input.sprinting ? 2.9 : input.crouching ? 4.2 : WALK_BOB_RATE);
+    if (input.grounded) this.phase += input.speed * dt * (input.sprinting ? SPRINT_BOB_RATE : input.crouching ? CROUCH_BOB_RATE : WALK_BOB_RATE);
     this.idleTime += dt;
     this.landAge += dt;
     const landWeight = this.landAge < .15 ? this.landAge / .15 : Math.max(0, 1 - (this.landAge - .15) / .3);
