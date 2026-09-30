@@ -39,7 +39,7 @@ export function setupRoundUI(callbacks: { rematch: () => void; newMatch: () => v
         const won = snapshot.winnerIds.includes(localPlayerId);
         write('round-results-title', winners.length > 1 ? 'DRAW' : won ? 'VICTORY' : 'MATCH COMPLETE');
         const reason = snapshot.finishReason === 'kill-limit' ? `${snapshot.options.killLimit}-KILL LIMIT REACHED` : snapshot.finishReason === 'time-limit' ? 'TIME LIMIT REACHED' : 'MATCH ENDED';
-        const leader = winners.length === 1 ? `${winners[0].name} WINS` : 'SHARED TOP SCORE';
+        const leader = winners.length === 1 ? winners[0].id === localPlayerId ? 'YOU WIN' : `${winners[0].name} WINS` : 'SHARED TOP SCORE';
         write('round-results-reason', `${leader} · ${reason} · ${clock(snapshot.elapsedSeconds)}`);
         write('round-result-kills', String(local?.kills ?? 0)); write('round-result-deaths', String(local?.deaths ?? 0));
         write('round-result-quicks', String(local?.quickscopes ?? 0));

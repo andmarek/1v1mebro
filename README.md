@@ -9,10 +9,10 @@ npm install
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173** in a desktop browser and click **Create match**, choose rules, then **Start match**. Chrome or Edge in a regular browser window is recommended for mouse capture. If an embedded preview blocks Pointer Lock, the game falls back to dragging or using arrow keys to look and clicking to shoot. Right click aims in either mode; enable **Toggle aim** in Controls to aim with a click rather than a hold.
+Open **http://127.0.0.1:5173** in a desktop browser and click **Create match**, choose rules and limits, then **Start match**. Chrome or Edge in a regular browser window is recommended for mouse capture. If an embedded preview blocks Pointer Lock, the game falls back to dragging or using arrow keys to look and clicking to shoot. Right click aims in either mode; enable **Toggle aim** in Controls to aim with a click rather than a hold.
 
 ```sh
-npm test       # movement feel, collision, weapon timing/swaps, patrol, and penetration tests
+npm test       # simulation, rounds, spawns, bot combat, movement, weapons, and penetration tests
 npm run build # type-check and production build
 npm run preview
 ```
@@ -42,11 +42,13 @@ Bullet holes use three shared procedural textures for metal, wood, and concrete,
 
 ## Match setup
 
-**Create match** opens a separate rules dialog. **Quickscope practice** defaults to pistol damage and knives enabled, with enemy fire off. **Combat range** enables all three. Pistol damage can be disabled while retaining shots, sights, and weapon swaps. **New match** on the pause menu opens the dialog again; starting resets the session, while canceling preserves it. Personal Controls/Graphics/Audio preferences remain separate and persist locally.
+**Create match** opens a separate rules dialog. **Quickscope practice** defaults to unlimited training with pistol damage and knives enabled, and enemy fire off. **Combat range** enables all three with a 20-kill / 5-minute round. The initial setup also offers 20 kills / 5 minutes. Choose a kill limit, time limit, or Unlimited independently. Pistol damage can be disabled while retaining shots, sights, and weapon swaps. **New match** on the pause menu opens the dialog again; starting resets the session, while canceling preserves it. Personal Controls/Graphics/Audio preferences remain separate and persist locally.
 
-Enabled bots acquire targets within 35 m, react after 550–900 ms, and fire every 720–1000 ms. At most three attack at once. They track with a delay and imperfect aim so movement can dodge shots; actual cover blocks both sight and bullets. Hits deal 18 damage. Gun poses, muzzle flashes, brief pooled tracers, impact marks, sounds, and a red damage overlay show incoming fire.
+Rounds begin with a three-second countdown; movement, firing, weapon swaps, and bot attacks wait until it ends. Pausing freezes the countdown and match clock. The first participant to reach the kill limit wins; at timeout, the highest kill count wins, with ties shown as a draw. Results show kills, deaths, accuracy, quickscopes, and final standings. **Rematch** keeps the confirmed rules and limits while resetting all state. **New match** opens setup; canceling leaves the results available. Bots currently fight the player, not one another.
 
-You have 100 health, which stays damaged until respawn or reset. Death disables player actions and shows a two-second respawn countdown; enemy patrols continue. Respawning restores both magazines and health at the initial spawn, while keeping match statistics. Three seconds of spawn protection ends early when you fire an enabled damaging weapon or knife.
+Enabled bots use scoped bolt-action sniper rifles. They acquire the player within 35 m, react after 1.10–1.75 seconds, and fire at roughly 1.17–1.47 second intervals. Their rifles have five-round magazines, a 920 ms bolt cycle, and a 2.15 second reload. Ammo and weapon timers persist through lost sight, player death, and spawn protection. At most three attack at once. Slow tracking and imperfect aim make movement useful; actual cover blocks both sight and bullets. Direct hits deal 150 damage, making each shot dangerous. Gun poses, bolt/reload animations, muzzle flashes, pooled tracers, impact marks, sounds, a red overlay, and directional damage indicators show incoming fire. A bounded kill feed identifies the attacker, victim, weapon, and headshot/quickscope/wallbang bonuses.
+
+You have 100 health, which stays damaged until respawn or reset. Death disables player actions and shows a two-second respawn countdown; enemy patrols continue. Respawning restores both magazines and health while keeping match statistics. Ten perimeter spawn candidates are validated against arena collision and living occupants. Selection favors fewer enemy sightlines, distance from nearby enemies, and a different location from the previous spawn. If no point is valid, respawn waits and retries. The initial match spawn stays fixed for repeatable practice; bot respawns also wait if their patrol home is occupied. Three seconds of spawn protection ends early when you fire an enabled damaging weapon or knife.
 
 Knives deal 100 damage with a short wind-up, one contact event, and a 620 ms cooldown. A front-facing target must be within 2 m of its body surface and unobstructed by actual map cover. Melee lowers your firearm, cancels unfinished reloads without granting ammunition, and blocks firing, swaps, aiming, inspection, and sprinting until recovery. Knife eliminations score normally but do not count as firearm accuracy hits.
 
@@ -78,10 +80,15 @@ Movement and camera/weapon behavior reference [IW4L](https://github.com/vladtrc/
 
 ## Code
 
-- `src/main.ts`: input, fixed-step game loop, combat integration, HUD, pause.
+- `src/main.ts`: browser input, fixed-step host loop, Babylon geometry queries, rendering/audio adapters, HUD, and pause.
+- `src/matchSimulation.ts`: shared match state and action APIs for movement, weapons, damage, scoring, countdown/finish gates, and respawns; no DOM or Babylon imports. Geometry queries and spawn selection come from the host.
+- `src/rounds.ts` / `src/roundUI.ts`: engine-independent round controller and browser countdown/results UI.
+- `src/spawning.ts`: deterministic, collision-aware spawn selection.
+- `src/combatEvents.ts` / `src/combatFeedback.ts`: shared elimination events and bounded browser kill-feed/damage presentation.
 - `src/match.ts` / `src/matchSetup.ts`: shared combat contracts, damage rules, and match setup dialog.
 - `src/melee.ts` / `src/knife.ts`: cover-aware melee targeting and animated knife model.
-- `src/botCombat.ts` / `src/botWeapon.ts`: deterministic attacks, player life cycle, and visible bot weapons.
+- `src/botCombat.ts` / `src/botWeapon.ts`: deterministic sniper attacks and visible bot weapons.
+- `src/playerLife.ts`: shared health, protection, death, and respawn timing.
 - `src/combatEffects.ts`: bounded incoming-fire tracers.
 - `src/ballistics.ts`: cached static surface geometry, material/thickness penetration, damage, and clipped decal projection.
 - `src/ballistics.test.ts`: direct shots, material resistance, layered/angled cover, hollow shells, and surface projection checks.
@@ -106,4 +113,4 @@ Movement and camera/weapon behavior reference [IW4L](https://github.com/vladtrc/
 - `src/audio.ts`: synthesized shot, bolt, hit, reload, and footstep sounds.
 - `src/style.css`: menu, HUD, and scope overlay.
 
-Multiplayer would add the previously discussed Node.js/Colyseus server alongside the client, then prediction, reconciliation, and lag-compensated hit checks. It is intentionally outside this first build.
+The shared simulation is a starting point for an authoritative multiplayer host. Networking still needs a Node.js/Colyseus server, remote player state, server-side geometry and hit validation, prediction, reconciliation, and lag-compensated hit checks. This build remains entirely local.

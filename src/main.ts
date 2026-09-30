@@ -13,23 +13,25 @@ import '@babylonjs/core/Shaders/shadowMap.fragment';
 import { Ray } from '@babylonjs/core/Culling/ray';
 import { ImageProcessingConfiguration } from '@babylonjs/core/Materials/imageProcessingConfiguration';
 import { buildArena } from './arena';
-import { updatePatrol } from './patrol';
 import { settingsMarkup, setupSettings } from './settings';
 import { RangeAudio } from './audio';
 import { bulletDamage, resolveCover, traceCover } from './ballistics';
 import { ImpactMarks } from './impacts';
-import { MovementController } from './movement';
 import { buildRifle } from './weapon';
-import { type Player } from './simulation';
 import { buildPistol } from './pistol';
-import { Loadout, type WeaponSlot } from './loadout';
+import { type WeaponSlot } from './loadout';
 import { ViewMotion, WALK_BOB_RATE } from './viewMotion';
 import { DEFAULT_MATCH_RULES, allowsDamage, type MatchRules, type CombatVector, type DamageSource } from './match';
 import { matchSetupMarkup, setupMatch } from './matchSetup';
-import { MeleeController, selectMeleeTarget, MELEE_DAMAGE } from './melee';
+import { selectMeleeTarget, MELEE_DAMAGE } from './melee';
 import { buildKnife } from './knife';
-import { BotCombat, PlayerLife, playerHitDistance } from './botCombat';
+import { playerHitDistance } from './botCombat';
 import { CombatEffects } from './combatEffects';
+import { MatchSimulation } from './matchSimulation';
+import { DEFAULT_ROUND_OPTIONS, type RoundOptions } from './rounds';
+import { roundUIMarkup, setupRoundUI } from './roundUI';
+import { ARENA_SPAWNS, INITIAL_SPAWN, chooseSpawn, type SpawnPoint } from './spawning';
+import { combatFeedbackMarkup, setupCombatFeedback } from './combatFeedback';
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <canvas id="game" aria-label="First-person quickscope practice arena"></canvas>
@@ -40,7 +42,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="stats"><div><span>ELIMINATIONS</span><b id="kills">00</b></div><div><span>ACCURACY</span><b id="accuracy">—</b></div><div><span>QUICKSCOPES</span><b id="quicks">00</b></div><div><span>DEATHS</span><b id="deaths">00</b></div></div>
     <div id="respawn-screen" hidden><b>ELIMINATED</b><span id="respawn-label"></span></div>
     <div id="crosshair"><i></i><i></i><i></i><i></i><b></b></div>
-    <div id="hitmarker"></div><div id="feedback"><b></b><span></span></div>
+    ${combatFeedbackMarkup}<div id="hitmarker"></div><div id="feedback"><b></b><span></span></div>
     <div id="notification"></div>
     <footer class="hud-bottom"><div class="location"><span class="small-label">SECTOR 07</span><b>THE SCRAPYARD</b><div class="health-status" id="health-status"><span>HP</span><b id="health">100</b><div class="health-track"><i id="health-bar"></i></div><span id="protection"></span></div><span id="input-hint">WASD MOVE &nbsp; / &nbsp; RMB AIM &nbsp; / &nbsp; R RELOAD &nbsp; / &nbsp; ESC PAUSE</span></div><div class="weapon-status"><div class="loadout-slots"><span id="slot-rifle" class="selected"><kbd>1</kbd> INTERVENTION</span><span id="slot-pistol"><kbd>2</kbd> FIELD-9</span></div><span class="small-label" id="weapon-label">BOLT-ACTION / .408</span><b id="weapon-name">INTERVENTION <span>01</span></b><div class="ammo"><strong id="ammo">05</strong><span>/ ∞</span><div id="rounds"></div></div><div class="action-status"><span id="action">READY</span><div class="action-track"><i id="action-progress"></i></div></div></div></footer>
     <div id="fps"></div>
@@ -53,6 +55,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   </div>
   ${settingsMarkup}
   ${matchSetupMarkup}
+  ${roundUIMarkup}
   <div id="loading"><span>DEADBOLT</span><p>PREPARING THE RANGE…</p></div>
 `;
 
@@ -85,16 +88,15 @@ const arena = buildArena(scene, shadows);
 const viewmodel = buildRifle(scene, camera);
 viewmodel.root.setEnabled(false);
 const pistolModel = buildPistol(scene, camera); pistolModel.root.setEnabled(false);
-const loadout = new Loadout();
+const simulation = new MatchSimulation(arena.targets.map(target => ({ id: target.index, home: target.home, patrol: target.patrol })));
+const { loadout, melee, bots: botCombat, life, player, movement } = simulation;
+let roundOptions: RoundOptions = { ...DEFAULT_ROUND_OPTIONS };
+let previousSpawnId = INITIAL_SPAWN.id;
+const combatFeedback = setupCombatFeedback(id => id === 'player' ? 'YOU' : `ENEMY ${String(Number(id.slice(4)) + 1).padStart(2, '0')}`);
 const knifeModel = buildKnife(scene, camera);
-const melee = new MeleeController();
-const botCombat = new BotCombat();
-const life = new PlayerLife();
 const combatEffects = new CombatEffects(scene);
 let rules: MatchRules = { ...DEFAULT_MATCH_RULES };
 let damageUntil = 0, lastAttacker = 0;
-const player: Player = { x: 0, y: 0, z: -23, vy: 0, grounded: true };
-const movement = new MovementController();
 const viewMotion = new ViewMotion();
 const keys = new Set<string>();
 let now = 0, running = false, started = false, dragging = false, fallback = false;
@@ -113,7 +115,7 @@ function notify(message: string) { $('notification').textContent = message; noti
 function clearInput() { movement.cancelJump(); keys.clear(); aimingMouse = aimingToggle = rightMouseDownHandled = false; dragging = false; pendingFire = false; pendingJump = false; mouseFiredOnDown = false; dragDistance = 0; }
 function pause() {
   if (!running) return;
-  running = false; clearInput(); hud.hidden = true; menu.hidden = false;
+  updateHud(); running = false; clearInput(); hud.hidden = true; menu.hidden = false;
   $('play-label').textContent = 'RETURN TO THE RANGE';
   $('start-note').textContent = `${kills} eliminations · ${life.deaths} deaths · ${points.toLocaleString()} points`;
   if (document.pointerLockElement) document.exitPointerLock();
@@ -134,22 +136,31 @@ async function play() {
   } else $('input-hint').textContent = 'WASD MOVE / RMB AIM / Q SWAP / E KNIFE / R RELOAD / ESC PAUSE';
 }
 function reset() {
-  Object.assign(player, { x: 0, y: 0, z: -23, vy: 0, grounded: true });
+  simulation.reset(rules, roundOptions); previousSpawnId = INITIAL_SPAWN.id;
   yaw = now = 0; pitch = 0.024;
   movement.reset(); viewMotion.reset(yaw, pitch); cameraEyeY = eyeHeight = 1.65;
   stepDistance = travelSpeed = 0; sprinting = false; kills = quicks = hits = points = 0;
-  loadout.reset(); melee.reset(); botCombat.reset(); life.reset(0); combatEffects.clear(); damageUntil = 0;
+  combatEffects.clear(); combatFeedback.clear(); damageUntil = 0;
   boltSoundAt = hitUntil = feedbackUntil = notificationUntil = 0;
+  $('feedback').querySelector('b')!.textContent = '';
+  $('feedback').querySelector('span')!.textContent = '';
   inspectStarted = -10; lastWheelAt = -10;
   impacts.clear();
   arena.targets.forEach(t => { t.respawnAt = 0; t.root.setEnabled(true); t.reset(); });
   clearInput(); $('start-note').textContent = 'Practice reset · ready for another run';
   updateHud();
 }
-const matchSetup = setupMatch(next => { rules = { ...next }; reset(); updateRuleSummary(); void play(); });
+const matchSetup = setupMatch((next, options) => { rules = { ...next }; roundOptions = { ...options }; reset(); updateRuleSummary(); void play(); });
+const roundUI = setupRoundUI({ rematch: () => { reset(); void play(); }, newMatch: () => matchSetup.open() });
+function finishRound() {
+  if (simulation.round.phase !== 'finished') return;
+  running = false; clearInput(); updateHud();
+  for (const target of arena.targets) target.setCombatPose(false, 0, 0, Infinity);
+  if (document.pointerLockElement) document.exitPointerLock();
+}
 function updateRuleSummary() {
   $('mode-label').textContent = rules.botsShoot ? 'SOLO COMBAT' : 'SOLO PRACTICE';
-  $('active-rules').innerHTML = `<span>PISTOL DAMAGE ${rules.secondaryDamage ? 'ON' : 'OFF'}</span><span>KNIVES ${rules.knives ? 'ON' : 'OFF'}</span><span>ENEMY FIRE ${rules.botsShoot ? 'ON' : 'OFF'}</span>`;
+  $('active-rules').innerHTML = `<span>${roundOptions.killLimit ? `${roundOptions.killLimit} KILLS` : 'NO KILL LIMIT'} / ${roundOptions.timeLimitSeconds ? `${Math.round(roundOptions.timeLimitSeconds / 60)} MIN` : 'NO TIME LIMIT'}</span><span>PISTOL DAMAGE ${rules.secondaryDamage ? 'ON' : 'OFF'}</span><span>KNIVES ${rules.knives ? 'ON' : 'OFF'}</span><span>ENEMY FIRE ${rules.botsShoot ? 'ON' : 'OFF'}</span>`;
 }
 $('play').addEventListener('click', () => { if (started) void play(); else matchSetup.open(); });
 $('new-match').addEventListener('click', () => { pause(); matchSetup.open(); });
@@ -166,11 +177,11 @@ document.addEventListener('contextmenu', event => {
   if (event.target === canvas || running) event.preventDefault();
   // Embedded panels can send a right-click menu event without mouse-down.
   // Real mouse-down already handles aiming; never toggle twice for one click.
-  if (running && life.alive && event.target === canvas && event.button === 2 && toggleAim && !rightMouseDownHandled) aimingToggle = !aimingToggle;
+  if (running && simulation.active && life.alive && event.target === canvas && event.button === 2 && toggleAim && !rightMouseDownHandled) aimingToggle = !aimingToggle;
   rightMouseDownHandled = false;
 });
 window.addEventListener('keydown', e => {
-  if (!running || (!life.alive && e.code !== 'Escape')) return;
+  if (!running || ((!simulation.active || !life.alive) && e.code !== 'Escape')) return;
   if (['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'KeyC', 'KeyQ', 'KeyE', 'Digit1', 'Digit2'].includes(e.code)) e.preventDefault();
   keys.add(e.code);
   // Keyboard look also works in embedded panels that only deliver clicks during a drag.
@@ -187,25 +198,25 @@ window.addEventListener('keydown', e => {
   if (e.code === 'KeyQ' && !e.repeat) swap(loadout.requested === 0 ? 1 : 0);
   if (e.code === 'KeyV' && !e.repeat && !melee.active(now) && !loadout.swapping && !loadout.weapon.reloadAt && loadout.weapon.ads < 0.05) inspectStarted = now;
   if (!e.repeat && (e.code === 'Digit1' || e.code === 'Digit2')) swap(e.code === 'Digit1' ? 0 : 1);
-  if (e.code === 'KeyR' && !e.repeat && !melee.active(now) && loadout.reload(now)) { audio.reload(); notify('Reloading'); }
+  if (e.code === 'KeyR' && !e.repeat && !melee.active(now) && simulation.reload()) { audio.reload(); notify('Reloading'); }
   if (e.code === 'Escape') pause();
 });
 window.addEventListener('keyup', e => keys.delete(e.code));
 let lastWheelAt = -10;
 canvas.addEventListener('wheel', e => {
-  if (!running) return;
+  if (!running || !simulation.active) return;
   e.preventDefault();
   // Trackpad inertia and high-resolution wheels should produce one deliberate swap.
   if (Math.abs(e.deltaY) < 2 || now - lastWheelAt < .18) return;
   lastWheelAt = now; swap(loadout.requested === 0 ? 1 : 0);
 }, { passive: false });
 function swap(slot: WeaponSlot) {
-  if (!life.alive || melee.active(now)) return;
+  if (!simulation.active || !life.alive || melee.active(now)) return;
   inspectStarted = -10; pendingFire = false;
-  if (loadout.request(slot, now)) audio.swap();
+  if (simulation.swap(slot)) audio.swap();
 }
 canvas.addEventListener('mousedown', e => {
-  if (!running || !life.alive) return;
+  if (!running || !simulation.active || !life.alive) return;
   if (e.button === 3) { e.preventDefault(); knifeAttack(); return; }
   if (e.button === 0) {
     dragDistance = 0;
@@ -221,13 +232,13 @@ canvas.addEventListener('mousedown', e => {
 // Some embedded browser panels deliver clicks without mouse-down events.
 // In drag mode, looking around should not consume a round.
 canvas.addEventListener('click', e => {
-  if (running && life.alive && e.button === 0 && !mouseFiredOnDown && dragDistance < 5) pendingFire = true;
+  if (running && simulation.active && life.alive && e.button === 0 && !mouseFiredOnDown && dragDistance < 5) pendingFire = true;
   mouseFiredOnDown = false; dragDistance = 0;
 });
 canvas.addEventListener('auxclick', e => { if (e.button === 3) e.preventDefault(); });
 window.addEventListener('mouseup', e => { if (e.button === 0) dragging = false; if (e.button === 2) aimingMouse = false; });
 window.addEventListener('mousemove', e => {
-  if (!running || (document.pointerLockElement !== canvas && !dragging)) return;
+  if (!running || !simulation.active || !life.alive || (document.pointerLockElement !== canvas && !dragging)) return;
   if (dragging) dragDistance += Math.hypot(e.movementX, e.movementY);
   const scale = 0.0021 * sensitivity * (1 - loadout.weapon.ads * loadout.spec.lookReduction);
   yaw += e.movementX * scale;
@@ -257,12 +268,11 @@ const settings = setupSettings({
 for (const id of ['settings-open', 'settings-hud']) $(id).addEventListener('click', () => { pause(); $('settings-open').focus(); settings.open(); });
 
 function fire() {
-  if (!life.alive || melee.active(now)) return;
+  if (!simulation.active || !life.alive || melee.active(now)) return;
   inspectStarted = -10;
-  const shot = loadout.fire(now);
+  const shot = simulation.fire();
   if (!shot) { if (!loadout.swapping && !loadout.weapon.ammo && !loadout.weapon.reloadAt) { audio.dry(); notify('Magazine empty — press R to reload'); } return; }
   const spec = loadout.spec;
-  if (allowsDamage(rules, loadout.active === 0 ? 'sniper' : 'pistol')) life.protectedUntil = now;
   viewMotion.fire(spec.recoil);
   if (loadout.active === 0) { boltSoundAt = now + .35; audio.shot(); } else audio.pistolShot();
   // Scope accuracy is deliberately independent of the scope's visual animation.
@@ -297,18 +307,19 @@ function damageEnemy(index: number, damage: number, source: DamageSource, head =
   const target = arena.targets[index];
   if (!target || target.respawnAt) return;
   if (!allowsDamage(rules, source)) { notify('Secondary weapon damage is disabled for this match.'); return; }
-  target.health = Math.max(0, target.health - damage);
-  const eliminated = target.health === 0;
-  if (source !== 'knife') hits++; hitUntil = now + .19; feedbackUntil = now + 1.4;
+  const result = simulation.hitEnemy(index, damage, source, { headshot: head, quickscope, throughCover });
+  if (!result) return;
+  target.health = result.health;
+  const eliminated = result.eliminated;
+  hitUntil = now + .19; feedbackUntil = now + 1.4;
   $('hitmarker').classList.toggle('headshot', head);
   audio.hit(head);
   if (eliminated) {
-    target.root.setEnabled(false); target.respawnAt = now + 2;
-    kills++; if (quickscope) quicks++;
-    const reward = (head ? 150 : 100) + (quickscope ? 50 : 0); points += reward;
+    target.root.setEnabled(false); target.respawnAt = simulation.enemies.find(enemy => enemy.id === index)!.respawnAt;
+    const reward = result.reward;
     $('feedback').querySelector('b')!.textContent = throughCover
       ? (head ? 'WALLBANG HEADSHOT' : quickscope ? 'WALLBANG QUICKSCOPE' : 'WALLBANG')
-      : source === 'knife' ? 'KNIFE ELIMINATION' : quickscope ? 'QUICKSCOPE' : head ? 'HEADSHOT' : 'TARGET DOWN';
+      : source === 'knife' ? 'KNIFE ELIMINATION' : quickscope ? 'QUICKSCOPE' : head ? 'HEADSHOT' : `ELIMINATED ENEMY ${String(index + 1).padStart(2, '0')}`;
     $('feedback').querySelector('span')!.textContent = `+${reward} / ${damage} DMG${throughCover ? ` / ${coverLabel}` : ''}`;
   } else {
     $('feedback').querySelector('b')!.textContent = throughCover ? 'HIT THROUGH COVER' : 'HIT';
@@ -317,29 +328,30 @@ function damageEnemy(index: number, damage: number, source: DamageSource, head =
 }
 
 function fixedUpdate(dt: number) {
-  now += dt;
-  if (life.update(now)) respawnPlayer();
+  const tick = simulation.advance(dt, () => chooseSpawn(ARENA_SPAWNS, botSnapshots(), canSee, arena.solids, previousSpawnId));
+  now = simulation.now;
+  if (!tick.active) { finishRound(); return; }
+  if (!tick.activeDt) return;
+  dt = tick.activeDt;
+  for (const id of tick.enemyRespawns) { const target = arena.targets[id]; target.reset(); target.root.setEnabled(true); }
+  if (tick.playerRespawn) respawnPlayer(tick.playerRespawn);
   updateTargets(dt);
   if (!life.alive) {
     combatEffects.update(now); impacts.update(now);
-    for (const target of arena.targets) { target.setCombatPose(false, 0, 0, 10); }
+    updateBotCombat(dt);
     return;
   }
   const crouching = keys.has('KeyC') || keys.has('ControlLeft') || keys.has('ControlRight');
   const aiming = !melee.active(now) && (aimingMouse || aimingToggle);
   if (aiming || loadout.weapon.reloadAt) inspectStarted = -10;
   const previousSlot = loadout.active;
-  loadout.update(now, dt, aiming, adsSeconds);
-  if (previousSlot !== loadout.active) viewMotion.clearRecoil();
-  if (pendingJump) movement.queueJump();
-  pendingJump = false;
-  const motion = movement.update(player, {
+  const motion = simulation.move({
     strafe: Number(keys.has('KeyD')) - Number(keys.has('KeyA')),
     forward: Number(keys.has('KeyW')) - Number(keys.has('KeyS')),
-    yaw, sprint: keys.has('ShiftLeft') || keys.has('ShiftRight'), aiming, crouching,
-    ads: loadout.weapon.ads, moveScale: loadout.spec.moveScale, adsMoveScale: loadout.spec.adsMoveScale,
-    sprintBlocked: melee.active(now) || loadout.swapping || !!loadout.weapon.reloadAt || now - loadout.lastShots[loadout.active] < .2,
-  }, dt, arena.solids);
+    yaw, sprint: keys.has('ShiftLeft') || keys.has('ShiftRight'), aiming, crouching, jump: pendingJump,
+  }, dt, arena.solids, adsSeconds)!;
+  pendingJump = false;
+  if (previousSlot !== loadout.active) viewMotion.clearRecoil();
   travelSpeed = motion.distance / dt;
   sprinting = motion.sprinting;
   const ease = (rate: number) => 1 - Math.exp(-rate * dt);
@@ -363,22 +375,20 @@ function fixedUpdate(dt: number) {
     if (index !== null) damageEnemy(index, MELEE_DAMAGE, 'knife');
   }
   if (pendingFire) { pendingFire = false; fire(); }
-  updateBotCombat(dt);
+  if (simulation.active) updateBotCombat(dt);
+  for (const event of simulation.drainEvents()) combatFeedback.elimination(event);
   combatEffects.update(now); impacts.update(now);
+  finishRound();
 }
 function updateTargets(dt: number) {
+  simulation.patrol(dt, movingTargets);
   for (const target of arena.targets) {
-    if (target.respawnAt && now >= target.respawnAt) { target.reset(); target.root.setEnabled(true); target.respawnAt = 0; }
-    if (target.respawnAt) continue;
-    const blockers = [...(life.alive ? [player] : []), ...arena.targets.filter(other => other !== target && !other.respawnAt && Math.abs(other.home.y - target.home.y) < .5).map(other => other.patrol)]
-      .filter(blocker => 'y' in blocker ? Math.abs(blocker.y - target.home.y) < .5 : true);
-    updatePatrol(target.patrol, dt, movingTargets, blockers);
-    target.animate(dt, now);
+    const state = simulation.enemies.find(enemy => enemy.id === target.index)!;
+    target.health = state.health; target.respawnAt = state.respawnAt;
+    if (!state.respawnAt) target.animate(dt, now);
   }
 }
-function botSnapshots() {
-  return arena.targets.map(target => ({ id: target.index, x: target.root.position.x, y: target.home.y, z: target.root.position.z, alive: !target.respawnAt }));
-}
+function botSnapshots() { return simulation.snapshots(); }
 function canSee(from: CombatVector, to: CombatVector) {
   const origin = new Vector3(from.x, from.y, from.z), end = new Vector3(to.x, to.y, to.z);
   const distance = Vector3.Distance(origin, end);
@@ -387,27 +397,28 @@ function canSee(from: CombatVector, to: CombatVector) {
   return !traceCover(ray, arena.cover).some(crossing => crossing.entry.distance < distance - .01);
 }
 function knifeAttack() {
-  if (!life.alive || loadout.swapping) return;
+  if (!simulation.active || !life.alive || loadout.swapping) return;
   if (!rules.knives) { notify('Knives are disabled for this match.'); return; }
-  if (!melee.start(now, rules.knives)) return;
-  life.protectedUntil = now; aimingMouse = aimingToggle = pendingFire = false;
-  loadout.weapon.ads = 0; loadout.weapon.accurateSince = -Infinity; loadout.weapon.reloadAt = 0;
+  if (!simulation.knife()) return;
+  aimingMouse = aimingToggle = pendingFire = false;
   inspectStarted = -10; viewMotion.clearRecoil(); audio.melee();
 }
-function respawnPlayer() {
-  Object.assign(player, { x: 0, y: 0, z: -23, vy: 0, grounded: true });
-  yaw = 0; pitch = .024; cameraEyeY = eyeHeight = 1.65;
-  movement.reset(); viewMotion.reset(yaw, pitch); travelSpeed = stepDistance = 0; sprinting = false;
-  loadout.respawn(); melee.reset(); botCombat.reset(); clearInput(); boltSoundAt = 0;
+function respawnPlayer(spawn: SpawnPoint) {
+  previousSpawnId = spawn.id;
+  yaw = spawn.yaw; pitch = .024; cameraEyeY = player.y + 1.65; eyeHeight = 1.65;
+  viewMotion.reset(yaw, pitch); travelSpeed = stepDistance = 0; sprinting = false;
+  clearInput(); boltSoundAt = 0;
   inspectStarted = -10; damageUntil = hitUntil = feedbackUntil = 0; notify('Respawned — brief spawn protection'); positionCamera();
 }
 function updateBotCombat(dt: number) {
   const shots = botCombat.update(now, dt, botSnapshots(), { ...player, height: movement.height, alive: life.alive && now >= life.protectedUntil }, rules.botsShoot, canSee);
   for (const target of arena.targets) {
     const pose = botCombat.pose(target.index, now);
-    target.setCombatPose(pose.aiming, pose.yaw, pose.pitch, pose.shotAge);
+    target.setCombatPose(pose.aiming, pose.yaw, pose.pitch, pose.shotAge, pose.reloading, pose.reloadProgress, pose.boltProgress);
   }
   for (const shot of shots) {
+    if (!simulation.active) break;
+    simulation.botFired(shot.botId);
     const origin = new Vector3(shot.origin.x, shot.origin.y, shot.origin.z), direction = new Vector3(shot.direction.x, shot.direction.y, shot.direction.z);
     const distance = Vector3.Distance(origin, new Vector3(player.x, player.y + movement.height * .55, player.z));
     const hitDistance = playerHitDistance(shot.origin, shot.direction, { ...player, height: movement.height, alive: life.alive });
@@ -419,10 +430,13 @@ function updateBotCombat(dt: number) {
     if (blocked) impacts.stamp({ hit: cover.entry, material: cover.surface.material, exit: false }, now);
     audio.botShot(distance);
     if (shot.hit && !blocked && allowsDamage(rules, 'bot') && now >= life.protectedUntil && life.alive) {
-      const died = life.damage(shot.damage, now); damageUntil = now + .35; audio.hurt();
+      const hit = simulation.damagePlayer(shot.botId, shot.damage);
+      if (!hit.applied) continue;
+      combatFeedback.damage(shot.origin, now); damageUntil = now + .35; audio.hurt();
+      const died = hit.died;
       if (died) {
         lastAttacker = shot.botId; clearInput(); melee.reset(); movement.reset(); travelSpeed = 0; sprinting = false;
-        loadout.weapon.reloadAt = 0; botCombat.reset();
+        loadout.weapon.reloadAt = 0;
       }
     }
   }
@@ -436,13 +450,15 @@ function positionCamera() {
   camera.fov = .98 + (loadout.spec.aimFov - .98) * ads + .045 * viewMotion.sprint * (1 - ads);
 }
 function updateHud() {
+  const stats = simulation.round.standings().find(entry => entry.id === 'player')!;
+  kills = stats.kills; quicks = stats.quickscopes; hits = stats.hits; points = stats.points;
   $('health').textContent = String(Math.ceil(life.health));
   $('deaths').textContent = String(life.deaths).padStart(2, '0');
   $('health-bar').style.width = `${life.health}%`;
   $('health-status').classList.toggle('low', life.health < 40);
   $('protection').textContent = rules.botsShoot && life.alive && now < life.protectedUntil ? `PROTECTED ${Math.ceil(life.protectedUntil - now)}s` : '';
   $('respawn-screen').hidden = life.alive;
-  $('respawn-label').textContent = `ENEMY ${String(lastAttacker + 1).padStart(2, '0')} / RESPAWN IN ${Math.max(0, life.respawnAt - now).toFixed(1)}s`;
+  $('respawn-label').textContent = now >= life.respawnAt && !life.alive ? 'WAITING FOR A SAFE SPAWN' : `ENEMY ${String(lastAttacker + 1).padStart(2, '0')} / INTERVENTION / RESPAWN IN ${Math.max(0, life.respawnAt - now).toFixed(1)}s`;
   $('kills').textContent = String(kills).padStart(2, '0');
   $('quicks').textContent = String(quicks).padStart(2, '0');
   $('accuracy').textContent = loadout.shots ? `${Math.round(hits / loadout.shots * 100)}%` : '—';
@@ -454,9 +470,12 @@ function updateHud() {
   $('slot-pistol').classList.toggle('incoming', loadout.swapping && loadout.requested === 1);
   $('ammo').textContent = String(loadout.weapon.ammo).padStart(2, '0');
   $('rounds').innerHTML = Array.from({ length: loadout.spec.magazineSize }, (_, i) => `<i class="${i < loadout.weapon.ammo ? 'loaded' : ''}"></i>`).join('');
-  $('timer').textContent = `${String(Math.floor(now / 60)).padStart(2, '0')}:${String(Math.floor(now % 60)).padStart(2, '0')}`;
+  const remaining = simulation.round.timeRemaining;
+  const clock = remaining === null ? Math.floor(now) : Math.ceil(remaining);
+  $('timer').textContent = `${String(Math.floor(clock / 60)).padStart(2, '0')}:${String(Math.floor(clock % 60)).padStart(2, '0')}`;
   let progress = 1, status = 'READY';
-  if (!life.alive) { status = 'RESPAWNING'; progress = 0; }
+  if (!simulation.active) { status = simulation.round.phase === 'countdown' ? 'GET READY' : 'MATCH COMPLETE'; progress = 0; }
+  else if (!life.alive) { status = 'RESPAWNING'; progress = 0; }
   else if (melee.active(now)) { status = 'MELEE'; progress = melee.progress(now); }
   else if (loadout.swapping) { status = 'SWAPPING'; progress = loadout.swapProgress(now); }
   else if (loadout.weapon.reloadAt) { status = 'RELOADING'; progress = 1 - (loadout.weapon.reloadAt - now) / loadout.spec.reloadSeconds; }
@@ -508,6 +527,7 @@ engine.runRenderLoop(() => {
     $('hitmarker').style.opacity = now < hitUntil ? '1' : '0';
     $('feedback').style.opacity = now < feedbackUntil ? '1' : '0';
     $('notification').style.opacity = now < notificationUntil ? '1' : '0';
+    combatFeedback.update(now, player, yaw);
     if (frame - lastHud > 80) { updateHud(); lastHud = frame; }
   } else if (!started) {
     const t = frame / 1000;
@@ -515,6 +535,7 @@ engine.runRenderLoop(() => {
     camera.setTarget(new Vector3(0, 3.5, 3));
   }
   if (!running) { $('scope').style.opacity = '0'; viewmodel.root.setEnabled(false); pistolModel.root.setEnabled(false); knifeModel.root.setEnabled(false); $('damage-overlay').style.opacity = '0'; }
+  roundUI.render(simulation.round.snapshot, 'player', running || (started && simulation.round.phase === 'finished'));
   scene.render();
 });
 window.addEventListener('resize', () => engine.resize());
