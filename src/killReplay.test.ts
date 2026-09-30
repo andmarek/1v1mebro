@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { ReplayRecorder, REPLAY_SECONDS, REPLAY_HZ, REPLAY_TAIL_SECONDS } from './killReplay';
 
 describe('final kill recording', () => {
+  it('keeps each attacker’s shot/hit cues separate and freezes their tracer coordinates', () => {
+    const recorder = new ReplayRecorder(1), origin: [number, number, number] = [1, 2, 3];
+    recorder.record(0, () => {}); recorder.record(1, () => {});
+    recorder.cue(1, 'sniper', { actorId: 'bot-2', origin, end: [2, 3, 4] });
+    recorder.cue(1, 'hit', { actorId: 'bot-2' }); recorder.cue(1, 'sniper', { actorId: 'bot-8' }); recorder.cue(1, 'pistol');
+    const clip = recorder.clip('bot-2')!; origin[0] = 99;
+    expect(clip.cues.map(cue => cue.kind)).toEqual(['sniper', 'hit']); expect(clip.cues[0].origin).toEqual([1, 2, 3]);
+    expect(recorder.clip('player')!.cues.map(cue => cue.kind)).toEqual(['pistol']);
+  });
   it('bounds memory, evicts old history, and freezes a clip independently of reused slots', () => {
     const recorder = new ReplayRecorder(10), bytes = recorder.bytes;
     for (let i = 0; i <= 1000; i++) recorder.record(i / 30, pose => pose.fill(i), true);

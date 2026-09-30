@@ -128,6 +128,13 @@ export class MatchSimulation {
     return { damage, health: enemy.health, eliminated, reward };
   }
   botFired(id: number) { if (this.active && this.enemies.some(enemy => enemy.id === id && !enemy.respawnAt)) this.round.recordStats(`bot-${id}`, { shots: 1 }); }
+
+  /** Watching/skipping a death replay satisfies the local respawn wait, but never revives into unsafe geometry. */
+  completeDeathReplay() {
+    if (!this.active || this.life.alive) return false;
+    this.life.respawnAt = this.now;
+    return true;
+  }
   damagePlayer(id: number, amount: number) {
     const enemy = this.enemies.find(enemy => enemy.id === id);
     if (!this.active || !enemy || enemy.respawnAt || !allowsDamage(this.rules, 'bot') || !this.life.alive || this.now < this.life.protectedUntil || !Number.isFinite(amount) || amount <= 0) return { applied: false, died: false };
