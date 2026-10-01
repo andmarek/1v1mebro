@@ -13,4 +13,5 @@ export type BotSnapshot = CombatVector & { id: number; alive: boolean };
 export type PlayerSnapshot = CombatVector & { height: number; alive: boolean };
 export const PLAYER_HEALTH = 100;
 export const PLAYER_RESPAWN_SECONDS = 2;
+export const DEATH_RESPAWN_MAX_SECONDS = 10;
 export const SPAWN_PROTECTION_SECONDS = 3;

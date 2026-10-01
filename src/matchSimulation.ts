@@ -1,4 +1,4 @@
-import { DEFAULT_MATCH_RULES, allowsDamage, PLAYER_RESPAWN_SECONDS, type MatchRules, type CombatVector, type DamageSource } from './match';
+import { DEFAULT_MATCH_RULES, allowsDamage, PLAYER_RESPAWN_SECONDS, DEATH_RESPAWN_MAX_SECONDS, type MatchRules, type CombatVector, type DamageSource } from './match';
 import { Loadout, type WeaponSlot } from './loadout';
 import { MovementController } from './movement';
 import { MeleeController } from './melee';
@@ -39,8 +39,9 @@ export class MatchSimulation {
     this.reset(rules, options);
   }
   get active() { return this.round.phase === 'active'; }
+  private deathReplayHeld = false;
   reset(rules: Readonly<MatchRules> = this.rules, options?: RoundOptions) {
-    this.rules = { ...rules }; this.now = 0; this.round.reset(options);
+    this.rules = { ...rules }; this.now = 0; this.round.reset(options); this.deathReplayHeld = false;
     Object.assign(this.player, { x: 0, y: 0, z: -23, vy: 0, grounded: true });
     this.life.reset(); this.loadout.reset(); this.movement.reset(); this.melee.reset(); this.bots.reset(); this.events = [];
     for (const enemy of this.enemies) { enemy.health = 100; enemy.respawnAt = 0; resetPatrol(enemy.patrol); }
@@ -66,6 +67,7 @@ export class MatchSimulation {
     if (!this.life.alive && this.now >= this.life.respawnAt) {
       playerRespawn = selectSpawn();
       if (playerRespawn && this.life.update(this.now)) {
+        this.deathReplayHeld = false;
         Object.assign(this.player, { x: playerRespawn.x, y: playerRespawn.y, z: playerRespawn.z, vy: 0, grounded: true });
         this.loadout.respawn(); this.movement.reset(); this.melee.reset();
       }
@@ -129,9 +131,16 @@ export class MatchSimulation {
   }
   botFired(id: number) { if (this.active && this.enemies.some(enemy => enemy.id === id && !enemy.respawnAt)) this.round.recordStats(`bot-${id}`, { shots: 1 }); }
 
-  /** Watching/skipping a death replay satisfies the local respawn wait, but never revives into unsafe geometry. */
+  /** Hold only this player's respawn for a killcam, capped at ten seconds of match time. */
+  holdRespawnForReplay() {
+    if (!this.active || this.life.alive) return false;
+    if (!this.deathReplayHeld) { this.deathReplayHeld = true; this.life.respawnAt = this.now + DEATH_RESPAWN_MAX_SECONDS; }
+    return true;
+  }
+  /** Finishing/skipping releases the wait; safe-spawn selection still runs on the next live tick. */
   completeDeathReplay() {
     if (!this.active || this.life.alive) return false;
+    this.deathReplayHeld = false;
     this.life.respawnAt = this.now;
     return true;
   }
