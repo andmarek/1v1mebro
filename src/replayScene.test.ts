@@ -44,4 +44,28 @@ describe('replay scene presentation', () => {
       adapter.apply({ before: b, after: b, mix: 0 }); expect(root.position.x).toBe(20);
     } finally { scene.dispose(); engine.dispose(); }
   });
+  it('restores the latest live poses after drawing history, including on a failed render', () => {
+    const engine = new NullEngine(), scene = new Scene(engine);
+    try {
+      const camera = new FreeCamera('camera', Vector3.Zero(), scene), root = new TransformNode('bot', scene);
+      const arm = new Mesh('arm', scene); arm.parent = root;
+      const adapter = new ReplayScene(camera, [root]);
+      const historical = { at: 0, pose: new Float32Array(adapter.width) }; adapter.capture(historical.pose, 0, false);
+      // The live bot has moved/respawned since the death, while the spectator camera is elsewhere.
+      root.position.set(15, 2, 4); arm.rotation.z = .7; arm.visibility = .4; arm.setEnabled(false);
+      camera.position.set(10, 3, -8); camera.fov = .9;
+      for (const failure of [false, true]) {
+        const draw = () => adapter.renderPresentation(() => {
+          adapter.apply({ before: historical, after: historical, mix: 0 });
+          root.setEnabled(false); expect(camera.position.x).toBe(0); expect(arm.isEnabled(false)).toBe(true);
+          if (failure) throw new Error('render failed');
+        });
+        if (failure) expect(draw).toThrow('render failed'); else draw();
+        expect(root.position.asArray()).toEqual([failure ? 16 : 15, 2, 4]); expect(root.isEnabled()).toBe(true);
+        expect(arm.rotation.z).toBeCloseTo(.7); expect(arm.visibility).toBeCloseTo(.4); expect(arm.isEnabled(false)).toBe(false);
+        expect(camera.position.asArray()).toEqual([10, 3, -8]); expect(camera.fov).toBeCloseTo(.9);
+        root.position.x++;
+      }
+    } finally { scene.dispose(); engine.dispose(); }
+  });
 });

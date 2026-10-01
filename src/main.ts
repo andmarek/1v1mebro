@@ -177,7 +177,11 @@ const matchSetup = setupMatch((next, options) => { rules = { ...next }; roundOpt
 const roundUI = setupRoundUI({ rematch: () => { reset(); void play(); }, newMatch: () => matchSetup.open(), viewStandings: () => outro.skip(), skipReplay: () => outro.skipReplay() });
 const deathReplayUI = setupDeathReplayUI(() => { deathReplay.skip(); completeDeathReplay(); });
 function finishRound() {
-  if (pendingDeathReplay || deathReplay.active) return;
+  if (pendingDeathReplay) return;
+  if (deathReplay.active) {
+    if (simulation.round.phase === 'finished' && simulation.round.finishReason === 'time-limit') completeDeathReplay();
+    return;
+  }
   if (simulation.round.phase !== 'finished' || !outro.begin()) return;
   pendingReplay = simulation.round.finishReason === 'kill-limit' && finalKiller === 'player';
   running = false; audio.setActive(false); clearInput(); travelSpeed = 0; sprinting = false; updateHud();
@@ -369,7 +373,7 @@ function fixedUpdate(dt: number) {
   if (!tick.activeDt) return;
   dt = tick.activeDt;
   for (const id of tick.enemyRespawns) { const target = arena.targets[id]; target.reset(); target.root.setEnabled(true); }
-  if (tick.playerRespawn) respawnPlayer(tick.playerRespawn);
+  if (tick.playerRespawn) { if (deathReplay.active) completeDeathReplay(); respawnPlayer(tick.playerRespawn); }
   updateTargets(dt);
   if (!life.alive) {
     combatEffects.update(now); impacts.update(now);
@@ -582,9 +586,8 @@ function renderDeathReplay(dt: number) {
 }
 
 function completeDeathReplay() {
-  const clip = deathReplay.clip; if (!clip) return;
-  const last = clip.frames[clip.frames.length - 1];
-  replayScene.apply({ before: last, after: last, mix: 0 }); replayBody.root.setEnabled(false);
+  if (!deathReplay.active) return;
+  replayBody.root.setEnabled(false);
   const restoreLock = deathRestoreLock; deathRestoreLock = false;
   deathReplay.reset(); deathReplayUI.render(null); accumulator = 0;
   combatEffects.clear(); impacts.showAt(now); replayHitUntil = -Infinity; deathBoltAt = -Infinity;
@@ -602,9 +605,9 @@ function completeDeathReplay() {
 
 engine.runRenderLoop(() => {
   const frame = performance.now(), dt = Math.min((frame - lastFrame) / 1000, 0.05); lastFrame = frame;
-  if (running && !pendingDeathReplay && !deathReplay.active) {
+  if (running && !pendingDeathReplay) {
     accumulator += dt;
-    while (running && !pendingDeathReplay && !deathReplay.active && accumulator >= 1 / 120) { fixedUpdate(1 / 120); accumulator -= 1 / 120; }
+    while (running && !pendingDeathReplay && accumulator >= 1 / 120) { fixedUpdate(1 / 120); accumulator -= 1 / 120; }
   }
   if (deathReplay.active && running && !document.hidden) { deathReplay.advance(dt); if (deathReplay.complete) completeDeathReplay(); }
   if (outro.presenting && !document.hidden) outro.advance(dt);
@@ -627,9 +630,7 @@ engine.runRenderLoop(() => {
   hud.classList.toggle('round-ending', presenting || deathShowing);
   hud.classList.toggle('round-banner', outro.stage === 'banner');
   hud.classList.toggle('round-replay', replaying || deathShowing);
-  if (deathShowing) {
-    renderDeathReplay(dt);
-  } else if (replaying && replay) {
+  if (replaying && replay) {
     const elapsed = outro.replayElapsed;
     impacts.showAt(replay.start + elapsed);
     const lens = replayScene.apply(replay.sample(elapsed));
@@ -639,7 +640,7 @@ engine.runRenderLoop(() => {
     combatEffects.update(replay.start + elapsed);
     $('hitmarker').classList.toggle('headshot', replayHeadshot);
     $('hitmarker').style.opacity = elapsed < replayHitUntil ? '1' : '0';
-  } else if (running || presenting) {
+  } else if (!deathShowing && (running || presenting)) {
     const renderNow = now + (presenting ? outro.elapsed : 0);
     const aim = loadout.weapon.ads * (presenting ? outro.aimScale : 1);
     viewMotion.update(dt, {
@@ -693,6 +694,7 @@ engine.runRenderLoop(() => {
         pendingDeathReplay = false;
         const clip = recorder.clip(`bot-${lastAttacker}`);
         if (deathReplay.begin(clip, lastAttacker)) {
+          simulation.holdRespawnForReplay();
           accumulator = 0; audio.setActive(false); clearInput(); combatEffects.clear(); replayHitUntil = -Infinity; replayBody.reset();
           deathRestoreLock = document.pointerLockElement === canvas;
           if (document.pointerLockElement) document.exitPointerLock();
@@ -703,16 +705,19 @@ engine.runRenderLoop(() => {
         if (replay) outro.scheduleReplay(replay.duration);
       }
     }
-    if (frame - lastHud > 80) { updateHud(); lastHud = frame; }
   } else if (!started) {
     const t = frame / 1000;
     camera.position.set(24 + Math.sin(t * 0.035) * 2, 15, -27);
     camera.setTarget(new Vector3(0, 3.5, 3));
   }
   if (!running && !presenting) { $('scope').style.opacity = '0'; viewmodel.root.setEnabled(false); pistolModel.root.setEnabled(false); knifeModel.root.setEnabled(false); $('damage-overlay').style.opacity = '0'; }
+  if ((running || presenting) && frame - lastHud > 80) { updateHud(); lastHud = frame; }
   roundUI.render(simulation.round.snapshot, 'player', running || (started && simulation.round.phase === 'finished'), outro.stage, replay ? outro.replayElapsed / replay.duration : 0);
   deathReplayUI.render(deathShowing ? deathReplay.attacker : null, deathReplay.clip ? deathReplay.replayElapsed / deathReplay.clip.duration : 0, simulation.round.phase === 'finished');
-  scene.render();
+  if (deathShowing) {
+    try { replayScene.renderPresentation(() => { renderDeathReplay(dt); scene.render(); }); }
+    finally { replayBody.root.setEnabled(false); }
+  } else scene.render();
 });
 window.addEventListener('resize', () => engine.resize());
 scene.executeWhenReady(() => { $('loading').hidden = true; });

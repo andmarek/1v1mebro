@@ -15,9 +15,17 @@ export class ReplayScene {
   private readonly from = Quaternion.Identity();
   private readonly to = Quaternion.Identity();
   private readonly rotation = Quaternion.Identity();
+  private readonly livePose: Float32Array;
   constructor(private readonly camera: FreeCamera, roots: readonly TransformNode[]) {
     this.nodes = [...new Set(roots.flatMap(root => [root, ...root.getDescendants(false).filter((node): node is TransformNode => node instanceof TransformNode)]))];
     this.width = this.nodes.length * STRIDE + 9;
+    this.livePose = new Float32Array(this.width);
+  }
+  /** Temporarily draw history, then restore the latest live world before any further ticks/queries. */
+  renderPresentation(draw: () => void) {
+    this.capture(this.livePose, 0, false);
+    const live = { at: 0, pose: this.livePose };
+    try { draw(); } finally { this.apply({ before: live, after: live, mix: 0 }); }
   }
   capture(data: Float32Array, scope: number, accurate: boolean) {
     this.nodes.forEach((node, i) => {
